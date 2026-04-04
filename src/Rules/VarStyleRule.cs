@@ -26,10 +26,10 @@ sealed class VarStyleRule : IRule
             if (variable?.Initializer?.Value == null) continue;
 
             var isVar = decl.Type.IsVar;
-            var init = variable.Initializer.Value;
-            var span = decl.Type.GetLocation().GetLineSpan();
-            var line = span.StartLinePosition.Line + 1;
-            var col  = span.StartLinePosition.Character + 1;
+            var init  = variable.Initializer.Value;
+            var span  = decl.Type.GetLocation().GetLineSpan();
+            var line  = span.StartLinePosition.Line + 1;
+            var col   = span.StartLinePosition.Character + 1;
 
             if (!isVar)
                 CheckExplicitType(filePath, decl.Type, init, line, col, config, diagnostics);
@@ -50,10 +50,8 @@ sealed class VarStyleRule : IRule
         {
             if (StyleHelper.TryGet(config, "csharp_style_var_for_built_in_types",
                 out var val, out var sev) && val == "true")
-            {
                 diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS010",
                     $"Use 'var' instead of '{typeName}' (csharp_style_var_for_built_in_types = true).", sev));
-            }
             return;
         }
 
@@ -61,19 +59,15 @@ sealed class VarStyleRule : IRule
         {
             if (StyleHelper.TryGet(config, "csharp_style_var_when_type_is_apparent",
                 out var val, out var sev) && val == "true")
-            {
                 diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS010",
                     $"Use 'var' instead of '{typeName}' (csharp_style_var_when_type_is_apparent = true).", sev));
-            }
             return;
         }
 
         if (StyleHelper.TryGet(config, "csharp_style_var_elsewhere",
             out var elseVal, out var elseSev) && elseVal == "true")
-        {
             diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS010",
                 $"Use 'var' instead of '{typeName}' (csharp_style_var_elsewhere = true).", elseSev));
-        }
     }
 
     static void CheckVarType(
@@ -96,16 +90,11 @@ sealed class VarStyleRule : IRule
         init switch
         {
             ObjectCreationExpressionSyntax obj =>
-                declaredType == null ||
-                declaredType.ToString() == obj.Type.ToString() ||
-                declaredType.IsVar,
+                declaredType == null || declaredType.ToString() == obj.Type.ToString() || declaredType.IsVar,
             ImplicitObjectCreationExpressionSyntax => true,
             CastExpressionSyntax cast =>
-                declaredType == null ||
-                declaredType.ToString() == cast.Type.ToString() ||
-                declaredType.IsVar,
-            LiteralExpressionSyntax lit =>
-                !lit.Token.IsKind(SyntaxKind.NullKeyword),
+                declaredType == null || declaredType.ToString() == cast.Type.ToString() || declaredType.IsVar,
+            LiteralExpressionSyntax lit => !lit.Token.IsKind(SyntaxKind.NullKeyword),
             ArrayCreationExpressionSyntax => true,
             _ => false
         };
