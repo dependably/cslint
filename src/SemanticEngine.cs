@@ -61,14 +61,11 @@ class SemanticEngine
         if (compilation == null) return [];
 
         var diagnostics      = new List<Diagnostic>();
-        var severityOverrides = BuildSeverityOverrides(project, compilation);
+        var severityOverrides = BuildSeverityOverrides(project);
 
-        var rawDiags = compilation.GetDiagnostics()
+        foreach (var d in compilation.GetDiagnostics()
             .Where(d => d.Location.IsInSource)
-            .Where(d => d.Severity != Microsoft.CodeAnalysis.DiagnosticSeverity.Hidden)
-            .ToList();
-
-        foreach (var d in rawDiags)
+            .Where(d => d.Severity != Microsoft.CodeAnalysis.DiagnosticSeverity.Hidden))
         {
             var effectiveSeverity = GetEffectiveSeverity(d, severityOverrides);
             if (effectiveSeverity == null) continue;
@@ -85,12 +82,11 @@ class SemanticEngine
                 effectiveSeverity.Value));
         }
 
-        diagnostics.AddRange(await RunSemanticStyleRulesAsync(project, compilation));
+        diagnostics.AddRange(await RunSemanticStyleRulesAsync(project));
         return diagnostics;
     }
 
-    async Task<IReadOnlyList<Diagnostic>> RunSemanticStyleRulesAsync(
-        Project project, Compilation compilation)
+    async Task<IReadOnlyList<Diagnostic>> RunSemanticStyleRulesAsync(Project project)
     {
         var diagnostics = new List<Diagnostic>();
 
@@ -115,8 +111,7 @@ class SemanticEngine
     }
 
     static IReadOnlyList<Diagnostic> CheckReadonlyFields(
-        string filePath, SyntaxNode root,
-        SemanticModel model, FileConfig config)
+        string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
         if (!config.Properties.TryGetValue("dotnet_style_readonly_field", out var val) ||
             !val.Contains("true")) return [];
@@ -135,17 +130,11 @@ class SemanticEngine
                 var symbol = model.GetDeclaredSymbol(variable) as IFieldSymbol;
                 if (symbol == null) continue;
 
-                var refs = root.DescendantNodes()
+                bool writtenInNonCtor = root.DescendantNodes()
                     .OfType<AssignmentExpressionSyntax>()
-                    .Where(a =>
-                    {
-                        var info = model.GetSymbolInfo(a.Left);
-                        return SymbolEqualityComparer.Default.Equals(info.Symbol, symbol);
-                    })
-                    .ToList();
-
-                bool writtenInNonCtor = refs.Any(a =>
-                    !a.Ancestors().OfType<ConstructorDeclarationSyntax>().Any());
+                    .Where(a => SymbolEqualityComparer.Default.Equals(
+                        model.GetSymbolInfo(a.Left).Symbol, symbol))
+                    .Any(a => !a.Ancestors().OfType<ConstructorDeclarationSyntax>().Any());
 
                 if (!writtenInNonCtor)
                 {
@@ -163,27 +152,24 @@ class SemanticEngine
     }
 
     static IReadOnlyList<Diagnostic> CheckVarStyle(
-        string filePath, SyntaxNode root,
-        SemanticModel model, FileConfig config)
+        string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
-        var diagnostics = new List<Diagnostic>();
-
+        var diagnostics    = new List<Diagnostic>();
         var varForBuiltin  = config.Properties.TryGetValue("csharp_style_var_for_built_in_types",  out var vfb) && vfb.Contains("true");
         var varWhenApparent = config.Properties.TryGetValue("csharp_style_var_when_type_is_apparent", out var vwa) && vwa.Contains("true");
 
         foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
         {
             var decl = local.Declaration;
-            if (decl.Type.IsVar) continue;
-            if (decl.Variables.Count != 1) continue;
+            if (decl.Type.IsVar || decl.Variables.Count != 1) continue;
             var variable = decl.Variables[0];
             if (variable.Initializer == null) continue;
 
             var typeInfo = model.GetTypeInfo(decl.Type);
             if (typeInfo.Type == null) continue;
 
-            var isBuiltin   = typeInfo.Type.SpecialType != SpecialType.None;
-            var isApparent  = IsTypeApparentFromInit(variable.Initializer.Value, model);
+            var isBuiltin  = typeInfo.Type.SpecialType != SpecialType.None;
+            var isApparent = IsTypeApparentFromInit(variable.Initializer.Value, model);
 
             if (varForBuiltin && isBuiltin)
             {
@@ -212,14 +198,12 @@ class SemanticEngine
     {
         var typeInfo = model.GetTypeInfo(init);
         return init is
-            ObjectCreationExpressionSyntax or
-            ImplicitObjectCreationExpressionSyntax or
-            CastExpressionSyntax or
-            ArrayCreationExpressionSyntax
+            ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax or
+            CastExpressionSyntax or ArrayCreationExpressionSyntax
             && typeInfo.Type != null;
     }
 
-    Dictionary<string, Severity?> BuildSeverityOverrides(Project project, Compilation compilation)
+    Dictionary<string, Severity?> BuildSeverityOverrides(Project project)
     {
         var overrides = new Dictionary<string, Severity?>(StringComparer.OrdinalIgnoreCase);
 
@@ -231,20 +215,16 @@ class SemanticEngine
             foreach (var (key, value) in config.Properties)
             {
                 if (!key.StartsWith("dotnet_diagnostic.", StringComparison.OrdinalIgnoreCase)) continue;
-
                 var parts = key.Split('.');
                 if (parts.Length < 3 || parts[2] != "severity") continue;
 
-                var diagId   = parts[1].ToUpperInvariant();
-                var severity = value.ToLowerInvariant() switch
+                overrides[parts[1].ToUpperInvariant()] = value.ToLowerInvariant() switch
                 {
                     "error"            => (Severity?)Severity.Error,
                     "warning"          => Severity.Warning,
                     "none" or "silent" => null,
                     _                  => Severity.Warning
                 };
-
-                overrides[diagId] = severity;
             }
         }
 
@@ -255,9 +235,7 @@ class SemanticEngine
         Microsoft.CodeAnalysis.Diagnostic d,
         Dictionary<string, Severity?> overrides)
     {
-        if (overrides.TryGetValue(d.Id, out var overridden))
-            return overridden;
-
+        if (overrides.TryGetValue(d.Id, out var overridden)) return overridden;
         return d.Severity switch
         {
             DiagnosticSeverity.Error   => Severity.Error,
