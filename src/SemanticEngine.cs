@@ -216,7 +216,9 @@ class SemanticEngine
             {
                 if (!key.StartsWith("dotnet_diagnostic.", StringComparison.OrdinalIgnoreCase)) continue;
                 var parts = key.Split('.');
-                if (parts.Length < 3 || parts[2] != "severity") continue;
+                // dotnet_diagnostic.<RuleId>.severity → 3 dot-separated parts.
+                const int diagnosticKeyPartCount = 3;
+                if (parts.Length < diagnosticKeyPartCount || parts[2] != "severity") continue;
 
                 overrides[parts[1].ToUpperInvariant()] = value.ToLowerInvariant() switch
                 {

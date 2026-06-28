@@ -83,7 +83,11 @@ class LintEngine
             try
             {
                 var results = await rule.AnalyzeAsync(filePath, config);
-                diagnostics.AddRange(results);
+                foreach (var d in results)
+                {
+                    var adjusted = ApplySeverityOverride(d, config);
+                    if (adjusted is not null) diagnostics.Add(adjusted);
+                }
             }
             catch (Exception ex)
             {
@@ -92,6 +96,23 @@ class LintEngine
         }
 
         return diagnostics;
+    }
+
+    // Honour `dotnet_diagnostic.<RuleId>.severity` from .editorconfig for ANY cslint rule
+    // (EC/CS/FMT/SAST/OP). `none`/`silent` drops the finding; otherwise it retunes severity.
+    // This is how by-design findings (e.g. SAST002 console output in a CLI) are suppressed.
+    static Diagnostic? ApplySeverityOverride(Diagnostic d, FileConfig config)
+    {
+        if (!config.Properties.TryGetValue($"dotnet_diagnostic.{d.Rule}.severity", out var sev))
+            return d;
+
+        return sev.Trim().ToLowerInvariant() switch
+        {
+            "none" or "silent"                        => null,
+            "error"                                   => d with { Severity = Severity.Error },
+            "warning" or "suggestion" or "info" or "hint" => d with { Severity = Severity.Warning },
+            _                                         => d,
+        };
     }
 
     IEnumerable<IRule> SelectRules(LintMode mode, FileConfig config)

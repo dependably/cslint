@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace CsLint;
@@ -10,7 +11,9 @@ record FileConfig(
 
 class EditorConfigLoader
 {
-    readonly Dictionary<string, (List<EditorConfigSection> Sections, string Content)> _cache = new();
+    // GetConfig is invoked concurrently from LintEngine.LintFilesAsync (Parallel.ForEachAsync),
+    // so the cache must be thread-safe; a plain Dictionary corrupts under concurrent writes.
+    readonly ConcurrentDictionary<string, (List<EditorConfigSection> Sections, string Content)> _cache = new();
 
     public FileConfig GetConfig(string filePath)
     {
@@ -78,17 +81,12 @@ class EditorConfigLoader
         return false;
     }
 
-    (List<EditorConfigSection> Sections, string Content) LoadConfigFile(string configFile)
-    {
-        if (_cache.TryGetValue(configFile, out var cached))
-            return cached;
-
-        var content = File.ReadAllText(configFile);
-        var sections = Parse(content.Split('\n'));
-        var result = (sections, content);
-        _cache[configFile] = result;
-        return result;
-    }
+    (List<EditorConfigSection> Sections, string Content) LoadConfigFile(string configFile) =>
+        _cache.GetOrAdd(configFile, static file =>
+        {
+            var content = File.ReadAllText(file);
+            return (Parse(content.Split('\n')), content);
+        });
 
     static List<EditorConfigSection> Parse(string[] lines)
     {

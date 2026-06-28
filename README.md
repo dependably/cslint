@@ -205,12 +205,36 @@ passed explicitly with `--config <file>`. CLI flags always win over the file.
 
 ```json
 {
+  "common": { "exclude": ["tests/fixtures/**"] },
   "cslint": {
     "strict": false,
+    "exclude": ["**/Generated/**"],
     "scan": { "magicNumbers": true, "boolFlags": true, "cancellation": true }
   }
 }
 ```
+
+### Excluding paths
+
+`--exclude <glob>` (repeatable) and the `exclude` config arrays skip files from any selection
+mode. A pattern with no wildcard is a substring match; otherwise `**`/`*`/`?` glob against the
+path relative to `--root`. Use it for test fixtures, generated code, vendored sources, etc.
+
+### Suppressing or retuning a finding
+
+Any rule's severity is controllable per file/glob from `.editorconfig` — the same mechanism
+cslint already uses for everything else:
+
+```ini
+[*.cs]
+dotnet_diagnostic.SAST002.severity = none     # silence console-output in a CLI app
+[src/Critical/*.cs]
+dotnet_diagnostic.OP004.severity   = error    # promote magic numbers to an error here
+```
+
+Levels: `none`/`silent` (drop), `suggestion`, `warning`, `error`. This applies to every rule
+(EC/CS/FMT/SAST/OP), so a by-design pattern is silenced with a visible, scoped justification
+rather than left to nag.
 
 ---
 

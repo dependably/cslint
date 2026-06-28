@@ -297,8 +297,9 @@ sealed class ObjectInitializerRule : IRule
                 var siblings = parent.ChildNodes().ToList();
                 var idx      = siblings.IndexOf(local);
 
+                const int maxLookaheadStatements = 5;
                 var nextAssignments = siblings.Skip(idx + 1)
-                    .Take(5)
+                    .Take(maxLookaheadStatements)
                     .OfType<ExpressionStatementSyntax>()
                     .Select(s => s.Expression)
                     .OfType<AssignmentExpressionSyntax>()

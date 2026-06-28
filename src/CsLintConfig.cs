@@ -7,11 +7,14 @@ namespace CsLint;
 /// suite. cslint reads the <c>common</c> and <c>cslint</c> sections (the latter overriding
 /// the former). Recognised keys:
 /// <code>
-/// { "cslint": { "strict": false,
+/// { "common": { "exclude": ["tests/fixtures/**"] },
+///   "cslint": { "strict": false,
+///               "exclude": ["**/Generated/**"],
 ///               "scan": { "magicNumbers": true, "boolFlags": true, "cancellation": true } } }
 /// </code>
 /// CLI flags always take precedence over the file (a flag can only further restrict: --strict
-/// forces strict on; --no-* forces a scan rule off). Unknown keys and other sections are ignored.
+/// forces strict on; --no-* forces a scan rule off; --exclude adds to the configured globs).
+/// Unknown keys and other sections are ignored.
 /// </summary>
 sealed class CsLintConfig
 {
@@ -21,6 +24,9 @@ sealed class CsLintConfig
     public bool ScanMagicNumbers { get; private init; } = true;
     public bool ScanBoolFlags { get; private init; } = true;
     public bool ScanCancellation { get; private init; } = true;
+
+    /// <summary>Path globs to skip, from <c>common.exclude</c> ∪ <c>cslint.exclude</c>.</summary>
+    public IReadOnlyList<string> Exclude { get; private init; } = [];
 
     /// <summary>An empty config (built-in defaults), used when no file is found.</summary>
     public static CsLintConfig Empty { get; } = new();
@@ -84,6 +90,7 @@ sealed class CsLintConfig
                 ScanMagicNumbers = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "magicNumbers", true),
                 ScanBoolFlags    = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "boolFlags", true),
                 ScanCancellation = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "cancellation", true),
+                Exclude          = ReadStringArray(common, tool, "exclude"),
             };
         }
         catch (JsonException ex)
@@ -114,5 +121,24 @@ sealed class CsLintConfig
             return true;
         }
         return false;
+    }
+
+    /// <summary>The union of the string array <paramref name="key"/> from both sections, de-duplicated.</summary>
+    static IReadOnlyList<string> ReadStringArray(JsonElement? first, JsonElement? second, string key)
+    {
+        var values = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var section in new[] { first, second })
+        {
+            if (section is not { } s || !s.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var element in arr.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.String) continue;
+                var v = element.GetString();
+                if (!string.IsNullOrWhiteSpace(v) && seen.Add(v)) values.Add(v);
+            }
+        }
+        return values;
     }
 }

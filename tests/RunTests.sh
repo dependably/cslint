@@ -17,7 +17,10 @@ check() {
     local expected_rule="$2"
     shift 2
     local output
-    output=$(cslint "$@" 2>&1 || true)
+    # Lint relative to the fixtures dir so the repo-root .dependably-check `exclude`
+    # (which targets tests/** for repo-wide / --global scans) does not skip a fixture
+    # we are deliberately pointing cslint at by path.
+    output=$(cslint --root "$FIXTURE_DIR" "$@" 2>&1 || true)
 
     if echo "$output" | grep -q "$expected_rule"; then
         echo "  PASS  $name"
@@ -34,7 +37,7 @@ check_absent() {
     local unexpected_rule="$2"
     shift 2
     local output
-    output=$(cslint "$@" 2>&1 || true)
+    output=$(cslint --root "$FIXTURE_DIR" "$@" 2>&1 || true)
 
     if echo "$output" | grep -q "$unexpected_rule"; then
         echo "  FAIL  $name  (unexpected rule $unexpected_rule found)"
@@ -78,6 +81,12 @@ echo "=== Opinionated scan ==="
 check "OP004 magic numbers"   "OP004" --scan "$FIXTURE_DIR/opinionated/OP004_MagicNumbers.cs"
 check "OP005 bool flags"      "OP005" --scan "$FIXTURE_DIR/opinionated/OP005_BooleanFlags.cs"
 check "OP006 cancel token"    "OP006" --scan "$FIXTURE_DIR/opinionated/OP006_MissingCancellationToken.cs"
+
+echo
+echo "=== Tool features (v4.1: exclude / editorconfig suppression / OP005 refinement) ==="
+check_absent "OP005 ignores out bool"            "OP005"   --scan "$FIXTURE_DIR/opinionated/OP005_OutRefBool.cs"
+check_absent "SAST002 silenced via editorconfig" "SAST002" --sast "$FIXTURE_DIR/suppress/ConsoleApp.cs"
+check_absent "exclude glob skips matched file"   "OP004"   --scan "$FIXTURE_DIR/opinionated/OP004_MagicNumbers.cs" --exclude "OP004_MagicNumbers.cs"
 
 echo
 echo "=== Results ==="

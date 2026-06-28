@@ -60,11 +60,13 @@ sealed class IndentStyleRule : TextRule
         return changed ? string.Join("", lines) : null;
     }
 
+    const int DefaultIndentSize = 4;
+
     static int GetIndentSize(IReadOnlyDictionary<string, string> props)
     {
         if (props.TryGetValue("indent_size", out var s) && int.TryParse(s, out var n)) return n;
         if (props.TryGetValue("tab_width", out var t) && int.TryParse(t, out var tw)) return tw;
-        return 4;
+        return DefaultIndentSize;
     }
 
     static int CountLeadingSpaces(string line)
@@ -259,6 +261,11 @@ sealed class LineLengthRule : TextRule
 
 sealed class CharsetRule : IRule
 {
+    // UTF byte-order-mark signatures, named so the BOM bytes and length read as constants.
+    const byte Utf8Bom0 = 0xEF, Utf8Bom1 = 0xBB, Utf8Bom2 = 0xBF;
+    const byte Utf16MarkFE = 0xFE, Utf16MarkFF = 0xFF;
+    const int Utf8BomLength = 3;
+
     public string Id => "EC006";
 
     public bool AppliesTo(FileConfig config) =>
@@ -287,19 +294,19 @@ sealed class CharsetRule : IRule
         var expected = config.Properties["charset"].ToLowerInvariant();
         var bytes = await File.ReadAllBytesAsync(filePath);
         var (_, hasBom) = DetectEncoding(bytes);
-        byte[] bom = [0xEF, 0xBB, 0xBF];
+        byte[] bom = [Utf8Bom0, Utf8Bom1, Utf8Bom2];
 
         if (expected == "utf-8" && hasBom)
         {
-            await File.WriteAllBytesAsync(filePath, bytes[3..]);
+            await File.WriteAllBytesAsync(filePath, bytes[Utf8BomLength..]);
             return true;
         }
 
         if (expected == "utf-8-bom" && !hasBom)
         {
-            var withBom = new byte[3 + bytes.Length];
+            var withBom = new byte[Utf8BomLength + bytes.Length];
             bom.CopyTo(withBom, 0);
-            bytes.CopyTo(withBom, 3);
+            bytes.CopyTo(withBom, Utf8BomLength);
             await File.WriteAllBytesAsync(filePath, withBom);
             return true;
         }
@@ -309,11 +316,11 @@ sealed class CharsetRule : IRule
 
     static (string Encoding, bool HasBom) DetectEncoding(byte[] bytes)
     {
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        if (bytes.Length >= Utf8BomLength && bytes[0] == Utf8Bom0 && bytes[1] == Utf8Bom1 && bytes[2] == Utf8Bom2)
             return ("utf-8", true);
-        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFE && bytes[1] == Utf16MarkFF)
             return ("utf-16be", true);
-        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFF && bytes[1] == Utf16MarkFE)
             return ("utf-16le", true);
         return ("utf-8", false);
     }

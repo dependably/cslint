@@ -13,6 +13,10 @@ record Diagnostic(
 
 static class Reporter
 {
+    // Column widths for the aligned "line:col" gutter in text output.
+    const int LineFieldWidth   = 5;
+    const int ColumnFieldWidth = 4;
+
     public static void Write(
         IReadOnlyList<Diagnostic> diagnostics,
         OutputFormat format,
@@ -65,7 +69,7 @@ static class Reporter
                 var levelLabel = d.Severity == Severity.Error ? "error  " : "warning";
                 var color      = d.Severity == Severity.Error ? ConsoleColor.Red : ConsoleColor.Yellow;
 
-                Console.Write($"    {d.Line,5}:{d.Column,-4}  ");
+                Console.Write($"    {d.Line,LineFieldWidth}:{d.Column,-ColumnFieldWidth}  ");
                 Console.ForegroundColor = color;
                 Console.Write(levelLabel);
                 Console.ResetColor();

@@ -157,7 +157,8 @@ sealed class PatternMatchingRule : IRule
         var siblings = parent.ChildNodes().ToList();
         var idx      = siblings.IndexOf(local);
 
-        return siblings.Skip(idx + 1).Take(3)
+        const int maxLookaheadStatements = 3;
+        return siblings.Skip(idx + 1).Take(maxLookaheadStatements)
             .OfType<IfStatementSyntax>()
             .Any(ifStmt =>
                 ifStmt.Condition is BinaryExpressionSyntax cond &&

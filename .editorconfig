@@ -1,0 +1,38 @@
+# cslint's own source tree.
+#
+# This file carries ONLY cslint severity overrides (dotnet_diagnostic.<RuleId>.severity)
+# for by-design findings, deliberately scoped under `src/` so it never affects the
+# intentional-violation fixtures under tests/fixtures/** (those carry their own
+# root=true .editorconfig where needed, and the sast/opinionated fixtures are matched
+# by --sast/--scan, not by any `src/...` section here). No formatting keys are set, so
+# the built-in EC/CS/FMT defaults that src already satisfies are left untouched.
+root = true
+
+# OP006 (missing CancellationToken): the rule pipeline (the IRule interface and its
+# implementations) and the engine each analyse one already-loaded file synchronously per
+# invocation. There is no long-running, cancellable work, so a CancellationToken is not
+# warranted; threading one through every rule would be ceremony with no behavioural value.
+[src/**.cs]
+dotnet_diagnostic.OP006.severity = none
+
+# OP005 (boolean flag argument): these flags are intrinsic binary modes of small internal
+# APIs, not feature toggles worth splitting into two methods or an options object:
+#   CsLintConfig.ReadBool(..., bool def)   — the fallback value when a key is absent.
+#   LintEngine.LintFile(s)Async(..., bool fix) — analyse vs. analyse-and-fix.
+#   SemanticEngine.AnalyzeProjectAsync(..., bool verbose) — verbose diagnostics toggle.
+[src/CsLintConfig.cs]
+dotnet_diagnostic.OP005.severity = none
+
+[src/LintEngine.cs]
+dotnet_diagnostic.OP005.severity = none
+
+[src/SemanticEngine.cs]
+dotnet_diagnostic.OP005.severity = none
+
+# SAST002 (console output left in production): Program.cs and Reporting.cs ARE the CLI
+# entry point and the output/reporting layer — writing to the console is their purpose.
+[src/Program.cs]
+dotnet_diagnostic.SAST002.severity = none
+
+[src/Reporting.cs]
+dotnet_diagnostic.SAST002.severity = none

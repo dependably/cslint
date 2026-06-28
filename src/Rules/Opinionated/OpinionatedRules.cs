@@ -85,6 +85,10 @@ sealed class BooleanParameterRule : IRule
             {
                 if (param.Type is not PredefinedTypeSyntax predefined) continue;
                 if (!predefined.Keyword.IsKind(SyntaxKind.BoolKeyword)) continue;
+                // out/ref/in bool are not flag arguments (e.g. a TryXxx's `out bool`).
+                if (param.Modifiers.Any(m => m.IsKind(SyntaxKind.OutKeyword)
+                        || m.IsKind(SyntaxKind.RefKeyword) || m.IsKind(SyntaxKind.InKeyword)))
+                    continue;
 
                 var loc = param.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,

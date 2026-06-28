@@ -28,7 +28,9 @@ cslint is a .NET 10 global CLI tool that lints C# files across four tiers: Edito
 
 ### Execution Flow
 
-`Program.cs` parses CLI args into `CliOptions`, resolves target files (staged via git, or explicit paths), then delegates to `LintEngine`. The engine selects rules based on `LintMode` (EditorConfig / EditorConfigAndSast / All), runs them in parallel via `Parallel.ForEachAsync`, and returns diagnostics. If `--deep` is passed, `SemanticEngine` additionally opens the `.csproj` via `MSBuildWorkspace` and surfaces Roslyn compiler diagnostics. `Reporter` formats the result as text, JSON, or GitHub Actions annotations.
+`Program.cs` parses CLI args into `CliOptions`, resolves target files (staged via git, or explicit paths), then delegates to `LintEngine`. Target resolution drops paths matching any `--exclude`/`.dependably-check` `exclude` glob via `PathFilter` (`src/PathFilter.cs`). The engine selects rules based on `LintMode` (EditorConfig / EditorConfigAndSast / All), runs them in parallel via `Parallel.ForEachAsync`, and returns diagnostics. If `--deep` is passed, `SemanticEngine` additionally opens the `.csproj` via `MSBuildWorkspace` and surfaces Roslyn compiler diagnostics. `Reporter` formats the result as text, JSON, or GitHub Actions annotations.
+
+**Per-finding severity / suppression:** `LintEngine.ApplySeverityOverride` consults `dotnet_diagnostic.<RuleId>.severity` from `.editorconfig` for EVERY rule (EC/CS/FMT/SAST/OP), not just `--deep` Roslyn diagnostics: `none`/`silent` drops the finding, otherwise it retunes severity. This is the sanctioned way to silence by-design findings (e.g. SAST002 console output in a CLI).
 
 ### Rule System
 

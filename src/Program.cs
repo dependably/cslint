@@ -30,6 +30,7 @@ options.Strict                = options.Strict || config.Strict;
 options.FlagMagicNumbers      = options.FlagMagicNumbers && config.ScanMagicNumbers;
 options.FlagBoolFlags         = options.FlagBoolFlags && config.ScanBoolFlags;
 options.FlagCancellationToken = options.FlagCancellationToken && config.ScanCancellation;
+options.Exclude               = [.. options.Exclude, .. config.Exclude]; // CLI globs + config globs
 
 var scanConfig = new ScanConfig(
     FlagMagicNumbers:             options.FlagMagicNumbers,
@@ -99,12 +100,14 @@ static string ModeLabel(LintMode mode) => mode switch
 
 static IEnumerable<string>? ResolveTargets(CliOptions opts)
 {
-    if (opts.Files.Count > 0) return opts.Files;
+    if (opts.Files.Count > 0) return Filter(opts.Files, opts);
 
     if (opts.Global)
     {
-        return Directory.EnumerateFiles(opts.Root, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsGenerated(f));
+        return Filter(
+            Directory.EnumerateFiles(opts.Root, "*.cs", SearchOption.AllDirectories)
+                .Where(f => !IsGenerated(f)),
+            opts);
     }
 
     if (!GitResolver.IsGitRepo(opts.Root))
@@ -124,8 +127,14 @@ static IEnumerable<string>? ResolveTargets(CliOptions opts)
         return [];
     }
 
-    return changed;
+    return Filter(changed, opts);
 }
+
+// Drop files matching any --exclude / .dependably-check exclude glob.
+static IEnumerable<string> Filter(IEnumerable<string> files, CliOptions opts) =>
+    opts.Exclude.Count == 0
+        ? files
+        : files.Where(f => !PathFilter.IsExcluded(f, opts.Root, opts.Exclude));
 
 static bool IsGenerated(string path) =>
     path.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) ||
@@ -211,6 +220,9 @@ static CliOptions ParseOptions(string[] args)
             case "--config":
                 if (++i < args.Length) opts.ConfigPath = Path.GetFullPath(args[i]);
                 break;
+            case "--exclude":
+                if (++i < args.Length) opts.Exclude.Add(args[i]);
+                break;
 
             default:
                 if (!args[i].StartsWith('-'))
@@ -245,6 +257,8 @@ static void PrintHelp()
           (default)     Staged .cs files (git diff --cached)
           --global, -g  All .cs files under root (skips bin/obj)
           --unstaged    Include unstaged changes
+          --exclude <g> Skip paths matching glob (repeatable; substring if no wildcard).
+                        Also read from .dependably-check (common.exclude / cslint.exclude).
 
         DEEP MODE
           --project, -p Path to .csproj or .sln (implies --deep)
@@ -260,6 +274,12 @@ static void PrintHelp()
           --no-magic-numbers    Disable OP004 (magic numbers)
           --no-bool-flags       Disable OP005 (boolean flag arguments)
           --no-cancellation     Disable OP006 (missing CancellationToken)
+
+        SUPPRESSING / RETUNING FINDINGS
+          Any rule's severity can be set per file/glob from .editorconfig:
+            dotnet_diagnostic.SAST002.severity = none      # silence (e.g. console output in a CLI)
+            dotnet_diagnostic.OP004.severity   = error     # promote
+          Levels: none/silent (drop) | suggestion | warning | error.
 
         CONFIG
           --config <f>  Path to a .dependably-check JSON file. When omitted, it is discovered
@@ -301,6 +321,7 @@ sealed class CliOptions
     public string Root         { get; set; } = Directory.GetCurrentDirectory();
     public string? ConfigPath  { get; set; }
     public List<string> Files  { get; set; } = [];
+    public List<string> Exclude { get; set; } = [];
 
     public bool FlagMagicNumbers      { get; set; } = true;
     public bool FlagBoolFlags         { get; set; } = true;

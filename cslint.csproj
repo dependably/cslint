@@ -15,7 +15,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>cslint</ToolCommandName>
     <PackageId>Dependably.CsLint</PackageId>
-    <Version>4.0.0</Version>
+    <Version>4.1.0</Version>
     <Authors>MHiland &lt;michael@dependably.ca&gt;</Authors>
     <Company>Dependably</Company>
     <Description>C# linter: EditorConfig enforcement + syntactic SAST + Roslyn semantic analysis + opinionated pattern checks. Part of the Dependably suite (quantitative metrics live in Dependably.CodeMetrics).</Description>
@@ -36,5 +36,9 @@
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.8.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.8.0" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
+    <!-- Pin a patched System.Drawing.Common: the 4.7.0 pulled transitively via
+         Microsoft.CodeAnalysis.Workspaces.MSBuild carries CVE-2021-24112 (critical).
+         This direct reference overrides the vulnerable transitive version. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 </Project>

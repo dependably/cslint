@@ -1,0 +1,5 @@
+root = true
+
+[*.cs]
+# Silence the console-output rule for this subtree (as a CLI app legitimately would).
+dotnet_diagnostic.SAST002.severity = none
