@@ -24,10 +24,6 @@
 #   SONAR_HOST_URL        SonarQube server URL (not a secret)
 #   SONAR_TOKEN           SonarQube analysis token (masked)
 #   GITHUB_TOKEN          GitHub PAT with Contents:write on dependably/cslint, used by mirror.
-#
-# TODO(suite): cslint has no committed packages.lock.json yet, so restore is not run in
-# --locked-mode here (nuget-check is). Add RestorePackagesWithLockFile + commit the lock,
-# then add `--locked-mode` to the restore commands to match the suite supply-chain bar.
 
 workflow:
   rules:
@@ -69,7 +65,7 @@ build-test:
   stage: test
   <<: *dotnet_cache
   script:
-    - dotnet restore cslint.csproj
+    - dotnet restore cslint.csproj --locked-mode
     - dotnet build cslint.csproj -c Release --no-restore
     # cslint's test suite is an integration harness (tests/RunTests.sh) that runs the
     # tool against the fixture files and checks the findings. Install the freshly packed
@@ -161,7 +157,7 @@ sbom:
   stage: sbom
   <<: *dotnet_cache
   script:
-    - dotnet restore cslint.csproj
+    - dotnet restore cslint.csproj --locked-mode
     - dotnet tool install --global CycloneDX
     - export PATH="$PATH:$HOME/.dotnet/tools"
     # -spv 1.6: Dependency-Track rejects spec 1.7 (CycloneDX v6 default). Pin to 1.6.

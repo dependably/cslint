@@ -7,6 +7,10 @@
     <RootNamespace>CsLint</RootNamespace>
     <AssemblyName>cslint</AssemblyName>
 
+    <!-- Pin the dependency graph: commit packages.lock.json and let CI restore in locked
+         mode so a drifted or tampered transitive dependency fails the build. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
     <!-- Package as a .NET global tool: `dotnet tool install -g Dependably.CsLint` -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>cslint</ToolCommandName>
