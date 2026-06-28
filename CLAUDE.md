@@ -24,7 +24,7 @@ dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLi
 
 ## Architecture
 
-cslint is a .NET 10 global CLI tool that lints C# files across four tiers: EditorConfig enforcement, SAST (security), Roslyn semantic analysis, and opinionated pattern scans. It reads all configuration from `.editorconfig` — no separate config file. Quantitative code metrics are a separate concern, owned by the companion `codemetrics` tool (see SUITE.md).
+cslint is a .NET 10 global CLI tool that lints C# files across four tiers: EditorConfig enforcement, SAST (security), Roslyn semantic analysis, and opinionated pattern scans. It reads all configuration from `.editorconfig` — no separate config file. Quantitative code metrics are a separate concern, owned by the companion `codemetrics` tool.
 
 ### Execution Flow
 

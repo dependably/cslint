@@ -265,7 +265,7 @@ static void PrintHelp()
           --config <f>  Path to a .dependably-check JSON file. When omitted, it is discovered
                         by walking up from --root to the repo boundary. The `cslint` (and
                         shared `common`) section can set `strict` and the `scan` toggles;
-                        CLI flags above take precedence. See SUITE.md for the schema.
+                        CLI flags above take precedence.
 
         OTHER
           --install-hook  Install pre-commit hook (runs --sast --strict)

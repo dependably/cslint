@@ -7,8 +7,8 @@ namespace CsLint.Rules.Opinionated;
 // cslint's opinionated tier covers categorical, pass/fail *pattern* smells only
 // (magic numbers, flag arguments, missing CancellationToken). Quantitative *metric*
 // gates — method length, cyclomatic complexity, nesting depth, parameter count — were
-// removed in v4.0.0 and are now owned by the `codemetrics` tool (see SUITE.md), which
-// measures them more rigorously. Keep this file metric-free.
+// removed in v4.0.0 and are now owned by the `codemetrics` tool, which measures them more
+// rigorously. Keep this file metric-free.
 record ScanConfig(
     bool FlagMagicNumbers           = true,
     bool FlagBooleanParameters      = true,

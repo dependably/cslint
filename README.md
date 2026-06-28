@@ -175,7 +175,7 @@ Runs after `dotnet build`. Requires `--project` pointing to a `.csproj` or `.sln
 Categorical, pass/fail *pattern* checks. (Quantitative *metric* gates — method length,
 cyclomatic complexity, nesting depth, parameter count — were removed in v4.0.0 and are now
 owned by the [`codemetrics`](https://github.com/dependably/codemetrics) tool, which measures
-them more rigorously. See `SUITE.md`.)
+them more rigorously.)
 
 | Rule | What it catches |
 |------|----------------|
@@ -211,8 +211,6 @@ passed explicitly with `--config <file>`. CLI flags always win over the file.
   }
 }
 ```
-
-See `SUITE.md` for the full suite-wide schema.
 
 ---
 
