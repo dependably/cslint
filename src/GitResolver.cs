@@ -1,4 +1,4 @@
-namespace CsEdLint;
+namespace CsLint;
 
 static class GitResolver
 {

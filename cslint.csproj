@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CsLint</RootNamespace>
+    <AssemblyName>cslint</AssemblyName>
+
+    <!-- Package as a .NET global tool: `dotnet tool install -g Dependably.CsLint` -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>cslint</ToolCommandName>
+    <PackageId>Dependably.CsLint</PackageId>
+    <Version>4.0.0</Version>
+    <Authors>MHiland &lt;michael@dependably.ca&gt;</Authors>
+    <Company>Dependably</Company>
+    <Description>C# linter: EditorConfig enforcement + syntactic SAST + Roslyn semantic analysis + opinionated pattern checks. Part of the Dependably suite (quantitative metrics live in Dependably.CodeMetrics).</Description>
+    <PackageTags>csharp;lint;editorconfig;sast;roslyn;dotnet-tool</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/dependably/cslint.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/dependably/cslint</PackageProjectUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.8.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.8.0" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
+  </ItemGroup>
+</Project>

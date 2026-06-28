@@ -2,7 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace CsEdLint.Rules.Sast;
+namespace CsLint.Rules.Sast;
 
 sealed class EmptyCatchRule : IRule
 {

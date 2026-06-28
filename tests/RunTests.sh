@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Run csedlint against fixture files and verify expected findings.
+# Run cslint against fixture files and verify expected findings.
 # Usage: bash tests/RunTests.sh
 #
-# Requires csedlint to be installed:
-#   dotnet tool install --global csedlint
+# Requires cslint to be installed:
+#   dotnet tool install --global Dependably.CsLint
 
 set -euo pipefail
 
@@ -17,15 +17,15 @@ check() {
     local expected_rule="$2"
     shift 2
     local output
-    output=$(csedlint "$@" 2>&1 || true)
+    output=$(cslint "$@" 2>&1 || true)
 
     if echo "$output" | grep -q "$expected_rule"; then
         echo "  PASS  $name"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         echo "  FAIL  $name  (expected rule $expected_rule not found)"
         echo "        output: $output"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 }
 
@@ -34,14 +34,14 @@ check_absent() {
     local unexpected_rule="$2"
     shift 2
     local output
-    output=$(csedlint "$@" 2>&1 || true)
+    output=$(cslint "$@" 2>&1 || true)
 
     if echo "$output" | grep -q "$unexpected_rule"; then
         echo "  FAIL  $name  (unexpected rule $unexpected_rule found)"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     else
         echo "  PASS  $name (clean)"
-        ((PASS++))
+        PASS=$((PASS + 1))
     fi
 }
 
@@ -73,9 +73,8 @@ check "SAST008 dynamic"        "SAST008" --sast "$FIXTURE_DIR/sast/SAST008_Dynam
 
 echo
 echo "=== Opinionated scan ==="
-check "OP001 god function"    "OP001" --scan "$FIXTURE_DIR/opinionated/OP001_GodFunction.cs"
-check "OP002 deep nesting"    "OP002" --scan "$FIXTURE_DIR/opinionated/OP002_DeepNesting.cs"
-check "OP003 long params"     "OP003" --scan "$FIXTURE_DIR/opinionated/OP003_LongParams.cs"
+# OP001-OP003 (method length, cyclomatic complexity, nesting depth, parameter count) were
+# removed in v4.0.0 — those quantitative metrics are now owned by the codemetrics tool.
 check "OP004 magic numbers"   "OP004" --scan "$FIXTURE_DIR/opinionated/OP004_MagicNumbers.cs"
 check "OP005 bool flags"      "OP005" --scan "$FIXTURE_DIR/opinionated/OP005_BooleanFlags.cs"
 check "OP006 cancel token"    "OP006" --scan "$FIXTURE_DIR/opinionated/OP006_MissingCancellationToken.cs"

@@ -1,0 +1,129 @@
+# GitHub Actions CI for cslint (.NET global tool) — part of the Dependably suite.
+#
+# Public-facing CI that runs on the GitHub mirror (github.com/dependably/cslint). GitLab
+# remains the source of truth; its pipeline mirrors `main` here via a manual job, and
+# GitHub CI then runs on the pushed commit and on community pull requests.
+#
+# Jobs:
+#   secret-scan   TruffleHog verified-secret scan (same pinned digest as the suite)
+#   format        `dotnet format --verify-no-changes` (advisory: continue-on-error)
+#   build-test    restore + build + integration tests (tests/RunTests.sh)
+#   release       (tags v* only) pack the .nupkg, emit SLSA build provenance
+#                 (keyless OIDC/sigstore), then publish it — SLSA Build L2.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: TruffleHog secret scan
+        run: |
+          set -eu
+          IMAGE="trufflesecurity/trufflehog:3.95.3@sha256:9cc33bb080cac0efbbf228a17667172875b529eeeab01efcc4697adfb55f568a"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          run_th() {
+            docker run --rm -v "$PWD:/repo" -w /repo \
+              -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+              "$IMAGE" "$@"
+          }
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "No usable base commit (first push / force-push) — scanning full history"
+            run_th git file:///repo --only-verified --fail
+          else
+            echo "Scanning new commits since $BASE"
+            run_th git file:///repo --since-commit "$BASE" --only-verified --fail
+          fi
+
+  # Advisory until cslint's own tree is `dotnet format` clean.
+  format:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet format cslint.csproj --verify-no-changes
+
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet restore cslint.csproj
+      - run: dotnet build cslint.csproj -c Release --no-restore
+      # Integration tests run the packed tool against the fixtures.
+      - run: dotnet pack cslint.csproj -c Release --no-restore -o artifacts
+      - run: dotnet tool install --global --add-source artifacts Dependably.CsLint
+      - run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          bash tests/RunTests.sh
+
+  # Release the .nupkg with signed SLSA build provenance — runs only on a `v*` tag, after
+  # the gating jobs pass. Keyless OIDC/sigstore attestation covers the exact packed bytes:
+  #   gh attestation verify <file>.nupkg -R dependably/cslint
+  release:
+    needs: [secret-scan, build-test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + upload the .nupkg
+      id-token: write # OIDC token for keyless sigstore signing
+      attestations: write # store the provenance attestation on the repo
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet restore cslint.csproj
+      - run: dotnet pack cslint.csproj -c Release --no-restore -o artifacts
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: "artifacts/*.nupkg"
+      - name: Publish to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -eu
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "NUGET_API_KEY not set — skipping nuget.org push (provenance + GitHub Release still produced)."
+            exit 0
+          fi
+          dotnet nuget push artifacts/*.nupkg \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" --skip-duplicate
+      - name: Publish .nupkg to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+          || gh release upload "$GITHUB_REF_NAME" artifacts/*.nupkg --clobber

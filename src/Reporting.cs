@@ -1,4 +1,4 @@
-namespace CsEdLint;
+namespace CsLint;
 
 enum Severity     { Warning, Error }
 enum OutputFormat { Text, Json, GitHub }

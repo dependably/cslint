@@ -1,5 +1,5 @@
-using CsEdLint;
-using CsEdLint.Rules.Opinionated;
+using CsLint;
+using CsLint.Rules.Opinionated;
 
 var options = ParseOptions(args);
 
@@ -13,11 +13,25 @@ if (options.DeepMode && !SemanticEngine.TryRegisterMsBuild(out var msbuildError)
     options.DeepMode = false;
 }
 
+// Shared .dependably-check config (repo root). CLI flags win: --strict / --no-* can only
+// further restrict what the file allows.
+CsLintConfig config;
+try
+{
+    config = CsLintConfig.Load(options.ConfigPath, options.Root);
+}
+catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException)
+{
+    Console.Error.WriteLine($"Config error: {ex.Message}");
+    return 2;
+}
+
+options.Strict                = options.Strict || config.Strict;
+options.FlagMagicNumbers      = options.FlagMagicNumbers && config.ScanMagicNumbers;
+options.FlagBoolFlags         = options.FlagBoolFlags && config.ScanBoolFlags;
+options.FlagCancellationToken = options.FlagCancellationToken && config.ScanCancellation;
+
 var scanConfig = new ScanConfig(
-    MaxMethodLines:               options.MaxMethodLines,
-    MaxCyclomaticComplexity:      options.MaxComplexity,
-    MaxNestingDepth:              options.MaxNesting,
-    MaxParameters:                options.MaxParams,
     FlagMagicNumbers:             options.FlagMagicNumbers,
     FlagBooleanParameters:        options.FlagBoolFlags,
     FlagMissingCancellationToken: options.FlagCancellationToken);
@@ -31,7 +45,7 @@ if (options.ExplainFile != null)
 }
 
 var mode    = DetermineMode(options);
-var targets = await ResolveTargets(options);
+var targets = ResolveTargets(options);
 if (targets == null) return 2;
 
 var summary = await engine.LintFilesAsync(targets, mode, options.Fix);
@@ -83,7 +97,7 @@ static string ModeLabel(LintMode mode) => mode switch
     _                            => "editorconfig"
 };
 
-static async Task<IEnumerable<string>?> ResolveTargets(CliOptions opts)
+static IEnumerable<string>? ResolveTargets(CliOptions opts)
 {
     if (opts.Files.Count > 0) return opts.Files;
 
@@ -147,7 +161,7 @@ static int InstallGitHook(string root)
             echo "error: .editorconfig is staged. Review config changes before committing." >&2
             exit 1
         fi
-        csedlint --sast --strict --format text
+        cslint --sast --strict --format text
         exit $?
         """);
 
@@ -194,17 +208,8 @@ static CliOptions ParseOptions(string[] args)
             case "--root" or "-r":
                 if (++i < args.Length) opts.Root = Path.GetFullPath(args[i]);
                 break;
-            case "--max-lines":
-                if (++i < args.Length && int.TryParse(args[i], out var ml)) opts.MaxMethodLines = ml;
-                break;
-            case "--max-complexity":
-                if (++i < args.Length && int.TryParse(args[i], out var mc)) opts.MaxComplexity = mc;
-                break;
-            case "--max-nesting":
-                if (++i < args.Length && int.TryParse(args[i], out var mn)) opts.MaxNesting = mn;
-                break;
-            case "--max-params":
-                if (++i < args.Length && int.TryParse(args[i], out var mp)) opts.MaxParams = mp;
+            case "--config":
+                if (++i < args.Length) opts.ConfigPath = Path.GetFullPath(args[i]);
                 break;
 
             default:
@@ -223,17 +228,18 @@ static CliOptions ParseOptions(string[] args)
 static void PrintHelp()
 {
     Console.WriteLine("""
-        csedlint v3 - C# code quality gate
+        cslint v4 - C# code quality gate
 
         USAGE
-          csedlint [options] [files...]
+          cslint [options] [files...]
 
         MODES
           (default)     EditorConfig enforcement only (syntactic, fast)
           --sast        + SAST: empty catches, SQL injection, fire-and-forget, console output,
                           hardcoded secrets, pragma suppression, Thread.Sleep in async, dynamic
           --deep        + semantic analysis via Roslyn compiler (requires --project)
-          --scan        + opinionated structural scan (implies --sast)
+          --scan        + opinionated pattern scan (implies --sast). For quantitative
+                          metrics (complexity, coupling, maintainability) use codemetrics.
 
         FILES
           (default)     Staged .cs files (git diff --cached)
@@ -250,14 +256,16 @@ static void PrintHelp()
           --fix         Auto-fix EditorConfig violations where possible
           --explain <f> Show which rules apply to a file and why
 
-        SCAN THRESHOLDS
-          --max-lines N         Max method lines (default: 100)
-          --max-complexity N    Max cyclomatic complexity (default: 15)
-          --max-nesting N       Max nesting depth (default: 4)
-          --max-params N        Max parameters (default: 5)
-          --no-magic-numbers    Disable OP004
-          --no-bool-flags       Disable OP005
-          --no-cancellation     Disable OP006
+        SCAN OPTIONS (--scan)
+          --no-magic-numbers    Disable OP004 (magic numbers)
+          --no-bool-flags       Disable OP005 (boolean flag arguments)
+          --no-cancellation     Disable OP006 (missing CancellationToken)
+
+        CONFIG
+          --config <f>  Path to a .dependably-check JSON file. When omitted, it is discovered
+                        by walking up from --root to the repo boundary. The `cslint` (and
+                        shared `common`) section can set `strict` and the `scan` toggles;
+                        CLI flags above take precedence. See SUITE.md for the schema.
 
         OTHER
           --install-hook  Install pre-commit hook (runs --sast --strict)
@@ -271,7 +279,7 @@ static void PrintHelp()
           CS010-CS040   C# and .NET style rules
           CS010-S, CS033-S  Semantic variants (--deep only)
           SAST001-008   Security and safety checks
-          OP001-006     Structural quality checks (--scan)
+          OP004-006     Opinionated pattern checks: magic numbers, flag args, CancellationToken (--scan)
         """);
 }
 
@@ -291,12 +299,9 @@ sealed class CliOptions
     public string? ProjectPath { get; set; }
     public OutputFormat Format { get; set; } = OutputFormat.Text;
     public string Root         { get; set; } = Directory.GetCurrentDirectory();
+    public string? ConfigPath  { get; set; }
     public List<string> Files  { get; set; } = [];
 
-    public int  MaxMethodLines        { get; set; } = 100;
-    public int  MaxComplexity         { get; set; } = 15;
-    public int  MaxNesting            { get; set; } = 4;
-    public int  MaxParams             { get; set; } = 5;
     public bool FlagMagicNumbers      { get; set; } = true;
     public bool FlagBoolFlags         { get; set; } = true;
     public bool FlagCancellationToken { get; set; } = true;

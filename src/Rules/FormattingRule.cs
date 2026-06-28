@@ -2,14 +2,14 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Formatting;
 using Microsoft.CodeAnalysis.Text;
 
-namespace CsEdLint.Rules;
+namespace CsLint.Rules;
 
 sealed class FormattingRule : IRule
 {
     public string Id => "FMT";
 
     static readonly HashSet<string> FormattingKeys = new(StringComparer.OrdinalIgnoreCase)
-    [
+    {
         "csharp_new_line_before_open_brace",
         "csharp_new_line_before_else",
         "csharp_new_line_before_catch",
@@ -47,7 +47,7 @@ sealed class FormattingRule : IRule
         "csharp_space_between_square_brackets",
         "csharp_preserve_single_line_statements",
         "csharp_preserve_single_line_blocks",
-    ];
+    };
 
     public bool AppliesTo(FileConfig config) =>
         config.ConfigFiles.Count > 0 &&
@@ -136,7 +136,7 @@ sealed class FormattingRule : IRule
                 _           => "Spacing or formatting does not match editorconfig csharp_space_* / csharp_indent_* rules.",
             };
 
-            diagnostics.Add(new(filePath, i + 1, 1, Id, message, Severity.Warning));
+            diagnostics.Add(new(filePath, i + 1, 1, "FMT", message, Severity.Warning));
         }
 
         return diagnostics;

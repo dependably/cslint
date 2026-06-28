@@ -1,0 +1,265 @@
+# CI/CD pipeline for cslint (.NET global tool) — part of the Dependably suite.
+# Adapted from the nuget-check pipeline; keep the three in sync when one changes.
+#
+# Flow:  test  →  pack  →  sbom  →  sbom-publish  →  publish (manual, default branch only)
+#                                                 ↘  mirror-to-github (manual, default branch only)
+#
+#   test            build + integration tests (tests/RunTests.sh against fixtures),
+#                   format check (advisory), secret + SAST + Sonar scans
+#   pack            `dotnet pack` the .nupkg tool, kept as a job artifact
+#   sbom            generate a CycloneDX SBOM (every pipeline), kept as an artifact
+#   sbom-publish    upload the SBOM to Dependency-Track (default branch, if configured)
+#   publish         manual gate that pushes the .nupkg to the private NuGet feed
+#   mirror-to-github  manual gate (default branch only) that pushes main + tags to the
+#                     public GitHub mirror; GitHub Actions CI then runs there
+#
+# Required CI/CD variables (Settings → CI/CD → Variables), "Protected" + "Masked":
+#   REGISTRY_URL          private NuGet feed BASE host, e.g. https://dependably.northwardlabs.ca
+#   REGISTRY_KEY          API key for `dotnet nuget push`
+#   dependencyTrack_url   Dependency-Track base URL
+#   dependencyTrack_token DT API key (BOM_UPLOAD + PROJECT_CREATION_UPLOAD). sbom-publish
+#                         is skipped (not failed) when this is unset, so the repo can adopt
+#                         the pipeline before DT is wired up.
+#   SNYK_TOKEN            Snyk (SAST) token. UNPROTECTED + masked so MR pipelines can scan.
+#   SONAR_HOST_URL        SonarQube server URL (not a secret)
+#   SONAR_TOKEN           SonarQube analysis token (masked)
+#   GITHUB_TOKEN          GitHub PAT with Contents:write on dependably/cslint, used by mirror.
+#
+# TODO(suite): cslint has no committed packages.lock.json yet, so restore is not run in
+# --locked-mode here (nuget-check is). Add RestorePackagesWithLockFile + commit the lock,
+# then add `--locked-mode` to the restore commands to match the suite supply-chain bar.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+  auto_cancel:
+    on_new_commit: interruptible
+
+default:
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  interruptible: true
+
+stages:
+  - test
+  - pack
+  - sbom
+  - sbom-publish
+  - publish
+  - mirror
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACKAGES: "${CI_PROJECT_DIR}/.nuget/packages"
+
+# Reusable NuGet restore cache (keyed on the project file).
+.dotnet_cache: &dotnet_cache
+  cache:
+    key:
+      files:
+        - cslint.csproj
+    paths:
+      - .nuget/packages/
+
+build-test:
+  stage: test
+  <<: *dotnet_cache
+  script:
+    - dotnet restore cslint.csproj
+    - dotnet build cslint.csproj -c Release --no-restore
+    # cslint's test suite is an integration harness (tests/RunTests.sh) that runs the
+    # tool against the fixture files and checks the findings. Install the freshly packed
+    # tool onto PATH, then run it.
+    - dotnet pack cslint.csproj -c Release --no-restore -o artifacts
+    - dotnet tool install --global --add-source artifacts Dependably.CsLint
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    - bash tests/RunTests.sh
+
+# Advisory for now: cslint's own source has not been run through `dotnet format`. Flip
+# allow_failure to false once the tree is clean (or replace with `cslint` dogfooding).
+format:
+  stage: test
+  <<: *dotnet_cache
+  allow_failure: true
+  script:
+    - dotnet format cslint.csproj --verify-no-changes
+
+# Secret scan — identical pinned digest to the rest of the suite so the scanner version
+# is a single source of truth. GIT_DEPTH 0 fetches full history; incremental when a usable
+# base SHA exists, full-history fallback otherwise. --only-verified --fail hard-fails.
+secret-scan:
+  stage: test
+  image:
+    name: trufflesecurity/trufflehog:3.95.3@sha256:9cc33bb080cac0efbbf228a17667172875b529eeeab01efcc4697adfb55f568a
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - |
+      BEFORE="${CI_COMMIT_BEFORE_SHA}"
+      if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+        echo "No usable base commit (first push / force-push) — scanning full history"
+        trufflehog git file://. --only-verified --fail
+      else
+        trufflehog git file://. --since-commit "$BEFORE" --only-verified --fail
+      fi
+
+# Snyk (SAST). Advisory; only runs when SNYK_TOKEN is configured.
+snyk-code:
+  stage: test
+  image:
+    name: snyk/snyk:linux@sha256:aeb296d943659dccbc7464340bb8741f6e11999cd99644dc92e6d315d6eda3f4
+    entrypoint: [""]
+  allow_failure: true
+  rules:
+    - if: '$SNYK_TOKEN'
+  script:
+    - snyk code test --severity-threshold=high
+
+# SonarQube analysis. Advisory, default-branch only, only when SONAR_TOKEN is set.
+# TODO(suite): create the SonarQube project and replace the placeholder key below.
+sonarqube-check:
+  stage: test
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SONAR_TOKEN'
+  before_script:
+    - apt-get update && apt-get install --yes --no-install-recommends openjdk-17-jre-headless
+    - dotnet tool install --global dotnet-sonarscanner
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+  script:
+    - dotnet sonarscanner begin
+      /k:"REPLACE_WITH_SONAR_PROJECT_KEY"
+      /d:sonar.host.url="$SONAR_HOST_URL"
+      /d:sonar.login="$SONAR_TOKEN"
+    - dotnet build cslint.csproj -c Release
+    - dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+  allow_failure: true
+
+pack:
+  stage: pack
+  <<: *dotnet_cache
+  script:
+    - dotnet pack cslint.csproj -c Release -o artifacts
+  artifacts:
+    paths:
+      - artifacts/*.nupkg
+    expire_in: 1 week
+
+# CycloneDX SBOM, generated every pipeline and kept as an artifact.
+sbom:
+  stage: sbom
+  <<: *dotnet_cache
+  script:
+    - dotnet restore cslint.csproj
+    - dotnet tool install --global CycloneDX
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    # -spv 1.6: Dependency-Track rejects spec 1.7 (CycloneDX v6 default). Pin to 1.6.
+    - dotnet CycloneDX cslint.csproj -o . -fn sbom.json -F Json -spv 1.6
+  artifacts:
+    paths:
+      - sbom.json
+    expire_in: 30 days
+
+# Publish the SBOM to Dependency-Track. Default branch only, serialized. Skipped (not
+# failed) when dependencyTrack_token is unset so the pipeline is green before DT exists.
+sbom-publish:
+  stage: sbom-publish
+  image: alpine:3
+  interruptible: false
+  needs:
+    - job: sbom
+      artifacts: true
+  resource_group: sbom-publish
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $dependencyTrack_token'
+  script:
+    - apk add --no-cache curl
+    - |
+      set -eu
+      if [ ! -s sbom.json ]; then
+        echo "ERROR: sbom.json (from the sbom job artifact) is missing." >&2
+        ls -la >&2
+        exit 1
+      fi
+      BASE="${dependencyTrack_url%/}"
+      PROJECT="Dependably.CsLint"
+      VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' cslint.csproj | head -n1)
+      [ -n "$VERSION" ] || VERSION=latest
+      echo "Publishing SBOM ($(wc -c < sbom.json) bytes) for $PROJECT@$VERSION to $BASE"
+      status=$(curl -sS -o /tmp/bom.out -w '%{http_code}' \
+        -X POST "$BASE/api/v1/bom" \
+        -H "X-Api-Key: $dependencyTrack_token" \
+        --form-string "autoCreate=true" \
+        --form-string "projectName=$PROJECT" \
+        --form-string "projectVersion=$VERSION" \
+        -F "bom=@sbom.json")
+      case "$status" in
+        200) echo "✓ SBOM uploaded";;
+        *) echo "SBOM upload failed (HTTP $status):" >&2; cat /tmp/bom.out >&2; exit 1;;
+      esac
+
+# Push the .nupkg to the private NuGet feed. Manual, default branch only. Bump <Version>
+# in cslint.csproj to release. REGISTRY_URL is the feed's BASE host; the v3 index path is
+# appended here.
+publish:
+  stage: publish
+  interruptible: false
+  dependencies:
+    - pack
+  resource_group: publish
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: false
+  script:
+    - |
+      if [ -z "$REGISTRY_URL" ] || [ -z "$REGISTRY_KEY" ]; then
+        echo "ERROR: REGISTRY_URL and REGISTRY_KEY must be set as CI/CD variables." >&2
+        exit 1
+      fi
+    - PKG=$(ls artifacts/*.nupkg)
+    - FEED="${REGISTRY_URL%/}/nuget/v3/index.json"
+    - echo "Publishing $PKG to $FEED"
+    - dotnet nuget push "$PKG" --source "$FEED" --api-key "$REGISTRY_KEY" --skip-duplicate
+
+# Mirror the default branch (+ tags) to the public GitHub repo. Manual, default branch only.
+# TODO(suite): create github.com/dependably/cslint before first use.
+mirror-to-github:
+  stage: mirror
+  interruptible: false
+  resource_group: mirror-to-github
+  variables:
+    GIT_DEPTH: 0
+  needs:
+    - job: build-test
+    - job: pack
+    - job: sbom
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: false
+  script:
+    - |
+      if [ -z "$GITHUB_TOKEN" ]; then
+        echo "ERROR: GITHUB_TOKEN must be set (GitHub PAT with Contents:write on dependably/cslint)." >&2
+        exit 1
+      fi
+    - |
+      set -eu
+      git remote remove github 2>/dev/null || true
+      git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/dependably/cslint.git"
+      echo "Mirroring ${CI_DEFAULT_BRANCH} + tags to github.com/dependably/cslint"
+      git push github "HEAD:refs/heads/${CI_DEFAULT_BRANCH}"
+      git push github --tags
+      git remote remove github

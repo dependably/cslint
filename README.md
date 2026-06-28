@@ -1,21 +1,21 @@
-# csedlint
+# cslint
 
 A C# linter with three distinct tiers:
 
 1. **EditorConfig enforcement** — reads your `.editorconfig` and enforces every key it finds. If the key is not in your config, the rule is silent. Zero opinions of its own.
 2. **Syntactic SAST** (`--sast`) — always-on security and safety checks that require no build step.
 3. **Semantic analysis** (`--deep`) — loads your project via Roslyn's `MSBuildWorkspace`, enabling `dotnet_diagnostic.CSXXXX.severity` overrides from `.editorconfig` and higher-accuracy style checks.
-4. **Opinionated scan** (`--scan`) — structural quality checks with configurable thresholds.
+4. **Opinionated scan** (`--scan`) — categorical pattern checks (magic numbers, flag arguments, missing `CancellationToken`). Quantitative metrics live in the companion `codemetrics` tool.
 
 ---
 
 ## Installation
 
 ```bash
-dotnet tool install --global csedlint
+dotnet tool install --global Dependably.CsLint
 ```
 
-Requires .NET 8 SDK.
+Requires .NET 10 SDK.
 
 ---
 
@@ -23,19 +23,19 @@ Requires .NET 8 SDK.
 
 ```bash
 # Default: enforce .editorconfig on staged .cs files
-csedlint
+cslint
 
 # EditorConfig + SAST on staged files, fail on warnings
-csedlint --sast --strict
+cslint --sast --strict
 
 # Full audit of all files in the repo
-csedlint --scan --global --format json > findings.json
+cslint --scan --global --format json > findings.json
 
 # Understand which rules apply to a specific file
-csedlint --explain src/MyService.cs
+cslint --explain src/MyService.cs
 
 # Post-build semantic analysis
-csedlint --deep --project src/MyApp.csproj --strict --format github
+cslint --deep --project src/MyApp.csproj --strict --format github
 ```
 
 ---
@@ -45,8 +45,8 @@ csedlint --deep --project src/MyApp.csproj --strict --format github
 Add two jobs to your GitHub Actions workflow. The first runs without a build, the second runs after `dotnet build` completes:
 
 ```yaml
-# ci/github-actions.yml — copy to .github/workflows/csedlint.yml in your repo
-name: csedlint
+# ci/github-actions.yml — copy to .github/workflows/cslint.yml in your repo
+name: cslint
 
 on:
   pull_request:
@@ -61,9 +61,9 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
-      - run: dotnet tool install --global csedlint
-      - run: csedlint --sast --strict --format github --unstaged
+          dotnet-version: '10.x'
+      - run: dotnet tool install --global Dependably.CsLint
+      - run: cslint --sast --strict --format github --unstaged
 
   semantic:
     runs-on: ubuntu-latest
@@ -72,10 +72,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '10.x'
       - run: dotnet build
-      - run: dotnet tool install --global csedlint
-      - run: csedlint --deep --project src/MyApp.csproj --strict --format github
+      - run: dotnet tool install --global Dependably.CsLint
+      - run: cslint --deep --project src/MyApp.csproj --strict --format github
 ```
 
 The `--format github` flag emits `::error file=...` and `::warning file=...` annotations that appear as inline PR comments.
@@ -85,10 +85,10 @@ The `--format github` flag emits `::error file=...` and `::warning file=...` ann
 ## Pre-commit hook
 
 ```bash
-csedlint --install-hook
+cslint --install-hook
 ```
 
-Installs a `pre-commit` hook that runs `csedlint --sast --strict`. It also blocks commits where `.editorconfig` is staged, preventing AI agents from silently relaxing rules through config changes.
+Installs a `pre-commit` hook that runs `cslint --sast --strict`. It also blocks commits where `.editorconfig` is staged, preventing AI agents from silently relaxing rules through config changes.
 
 ---
 
@@ -172,27 +172,47 @@ Runs after `dotnet build`. Requires `--project` pointing to a `.csproj` or `.sln
 
 ### Tier 4: Opinionated scan (`--scan`)
 
-| Rule | Default threshold | What it catches |
-|------|-------------------|----------------|
-| OP001 | 100 lines / complexity 15 | God functions |
-| OP002 | depth 4 | Excessive nesting |
-| OP003 | 5 parameters | Long parameter lists |
-| OP004 | | Magic numbers (not in const/enum/attribute) |
-| OP005 | | Boolean flag parameters in public methods |
-| OP006 | | Missing `CancellationToken` in public async APIs |
+Categorical, pass/fail *pattern* checks. (Quantitative *metric* gates — method length,
+cyclomatic complexity, nesting depth, parameter count — were removed in v4.0.0 and are now
+owned by the [`codemetrics`](https://github.com/dependably/codemetrics) tool, which measures
+them more rigorously. See `SUITE.md`.)
+
+| Rule | What it catches |
+|------|----------------|
+| OP004 | Magic numbers (not in const/enum/attribute) |
+| OP005 | Boolean flag parameters in public methods |
+| OP006 | Missing `CancellationToken` in public async APIs |
 
 ---
 
-## `--scan` threshold configuration
+## `--scan` configuration
 
-Override defaults at the command line:
+Each opinionated rule can be disabled at the command line:
 
 ```bash
-csedlint --scan --max-lines 80 --max-complexity 10 --max-nesting 3 --max-params 4
-csedlint --scan --no-magic-numbers    # disable OP004
-csedlint --scan --no-bool-flags       # disable OP005
-csedlint --scan --no-cancellation     # disable OP006
+cslint --scan --no-magic-numbers    # disable OP004
+cslint --scan --no-bool-flags       # disable OP005
+cslint --scan --no-cancellation     # disable OP006
 ```
+
+---
+
+## Configuration (`.dependably-check`)
+
+cslint reads project-level defaults from a repo-root `.dependably-check` JSON file (shared
+across the Dependably suite), discovered by walking up from `--root` to the repo boundary, or
+passed explicitly with `--config <file>`. CLI flags always win over the file.
+
+```json
+{
+  "cslint": {
+    "strict": false,
+    "scan": { "magicNumbers": true, "boolFlags": true, "cancellation": true }
+  }
+}
+```
+
+See `SUITE.md` for the full suite-wide schema.
 
 ---
 
@@ -223,13 +243,13 @@ This means Roslyn's formatter is the source of truth — the same engine Visual 
 
 ## Running tests
 
-Install csedlint, then:
+Install cslint, then:
 
 ```bash
 bash tests/RunTests.sh
 ```
 
-Each test invokes `csedlint` against a known-bad fixture file and asserts the expected rule ID appears in the output.
+Each test invokes `cslint` against a known-bad fixture file and asserts the expected rule ID appears in the output.
 
 ---
 

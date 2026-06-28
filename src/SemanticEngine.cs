@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.Build.Locator;
 
-namespace CsEdLint;
+namespace CsLint;
 
 class SemanticEngine
 {

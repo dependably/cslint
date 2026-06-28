@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace CsEdLint;
+namespace CsLint;
 
 record EditorConfigSection(string Pattern, IReadOnlyDictionary<string, string> Properties);
 

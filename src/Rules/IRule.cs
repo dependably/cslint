@@ -1,4 +1,4 @@
-namespace CsEdLint.Rules;
+namespace CsLint.Rules;
 
 enum RuleCategory { EditorConfig, Sast, Opinionated }
 

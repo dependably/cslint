@@ -1,4 +1,4 @@
-namespace CsEdLint.Rules;
+namespace CsLint.Rules;
 
 static class StyleHelper
 {

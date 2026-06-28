@@ -1,7 +1,8 @@
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace CsEdLint.Rules;
+namespace CsLint.Rules;
 
 sealed class VarStyleRule : IRule
 {
@@ -94,7 +95,7 @@ sealed class VarStyleRule : IRule
             ImplicitObjectCreationExpressionSyntax => true,
             CastExpressionSyntax cast =>
                 declaredType == null || declaredType.ToString() == cast.Type.ToString() || declaredType.IsVar,
-            LiteralExpressionSyntax lit => !lit.Token.IsKind(SyntaxKind.NullKeyword),
+            LiteralExpressionSyntax lit => !lit.IsKind(SyntaxKind.NullLiteralExpression),
             ArrayCreationExpressionSyntax => true,
             _ => false
         };

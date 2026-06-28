@@ -1,8 +1,8 @@
-using CsEdLint.Rules;
-using CsEdLint.Rules.Sast;
-using CsEdLint.Rules.Opinionated;
+using CsLint.Rules;
+using CsLint.Rules.Sast;
+using CsLint.Rules.Opinionated;
 
-namespace CsEdLint;
+namespace CsLint;
 
 enum LintMode { EditorConfig, EditorConfigAndSast, All }
 
@@ -57,9 +57,6 @@ class LintEngine
 
         _opinionatedRules =
         [
-            new GodFunctionRule(sc),
-            new DeepNestingRule(sc),
-            new LongParameterListRule(sc),
             new MagicNumberRule(sc),
             new BooleanParameterRule(sc),
             new MissingCancellationTokenRule(sc),
@@ -106,8 +103,11 @@ class LintEngine
         if (mode is LintMode.EditorConfigAndSast or LintMode.All)
             rules.AddRange(_sastRules);
 
+        // Honour AppliesTo so the opinionated toggles (FlagMagicNumbers / FlagBooleanParameters /
+        // FlagMissingCancellationToken — set by --no-* flags and the .dependably-check config)
+        // actually disable their rules.
         if (mode is LintMode.All)
-            rules.AddRange(_opinionatedRules);
+            rules.AddRange(_opinionatedRules.Where(r => r.AppliesTo(config)));
 
         return rules;
     }

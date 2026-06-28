@@ -1,0 +1,8 @@
+bin/
+obj/
+nupkg/
+artifacts/
+.nuget/
+sbom.json
+*.user
+.DS_Store
