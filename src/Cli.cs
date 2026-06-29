@@ -1,3 +1,4 @@
+using System.Reflection;
 using CsLint.Rules.Opinionated;
 
 namespace CsLint;
@@ -23,6 +24,7 @@ static class Cli
         }
 
         if (options.ShowHelp) { PrintHelp(); return 0; }
+        if (options.ShowVersion) { PrintVersion(); return 0; }
         if (options.InstallHook) return InstallGitHook(options.Root);
 
         EnsureMsBuildOrFallback(options);
@@ -336,6 +338,7 @@ static class Cli
         switch (arg)
         {
             case "--help" or "-h": opts.ShowHelp = true; return true;
+            case "--version": opts.ShowVersion = true; return true;
             case "--global" or "-g": opts.Global = true; return true;
             case "--unstaged": opts.Unstaged = true; return true;
             case "--fix": opts.Fix = true; return true;
@@ -394,6 +397,26 @@ static class Cli
         return i;
     }
 
+    /// <summary>The tool version, read from the assembly's informational/package version.</summary>
+    public static string Version()
+    {
+        var asm = typeof(Cli).Assembly;
+        // Prefer the informational version (maps to &lt;Version&gt; in the csproj); strip any
+        // build/SourceLink metadata suffix (e.g. "4.1.0+abc123") for a clean display string.
+        var informational = asm
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informational))
+        {
+            var plus = informational.IndexOf('+');
+            return plus >= 0 ? informational[..plus] : informational;
+        }
+
+        return asm.GetName().Version?.ToString() ?? "unknown";
+    }
+
+    public static void PrintVersion() => Console.WriteLine($"cslint {Version()}");
+
     public static void PrintHelp()
     {
         Console.WriteLine("""
@@ -449,6 +472,7 @@ static class Cli
               --verbose, -v   Show workspace diagnostics in --deep mode
               --root, -r      Project root (default: cwd)
               --help, -h      Show this help
+              --version       Print the cslint version
 
             RULE IDs
               EC001-EC006   Universal editorconfig (indent, trailing ws, newline, EOL, line length, charset)
@@ -465,6 +489,7 @@ static class Cli
 sealed class CliOptions
 {
     public bool ShowHelp { get; set; }
+    public bool ShowVersion { get; set; }
     public bool Global { get; set; }
     public bool Unstaged { get; set; }
     public bool Fix { get; set; }

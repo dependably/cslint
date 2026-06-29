@@ -1,4 +1,15 @@
 using CsLint;
 
 // Thin entry point: all CLI logic lives in CsLint.Cli (a named namespace, hence testable).
-return await Cli.RunAsync(args);
+// Top-level catch is the last line of defence: any unexpected failure (e.g. a Roslyn/MSBuild
+// fault under --deep) is reported as a single stderr line and mapped to exit 2 (operational
+// error), never an uncontrolled crash code.
+try
+{
+    return await Cli.RunAsync(args);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"cslint: internal error: {ex.Message}");
+    return 2;
+}
