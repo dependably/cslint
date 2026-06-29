@@ -33,8 +33,8 @@ dotnet tool install --global Dependably.CsLint
 # Default: enforce .editorconfig on staged .cs files
 cslint
 
-# EditorConfig + SAST on staged files, fail on warnings
-cslint --sast --strict
+# EditorConfig + SAST on staged files, fail on warnings too
+cslint --sast --fail-on severity=warning
 
 # Full audit of all files in the repo
 cslint --scan --global --format json > findings.json
@@ -43,7 +43,7 @@ cslint --scan --global --format json > findings.json
 cslint --explain src/MyService.cs
 
 # Post-build semantic analysis
-cslint --deep --project src/MyApp.csproj --strict --format github
+cslint --deep --project src/MyApp.csproj --fail-on severity=warning --format github
 ```
 
 ---
@@ -71,7 +71,7 @@ jobs:
         with:
           dotnet-version: '10.x'
       - run: dotnet tool install --global Dependably.CsLint
-      - run: cslint --sast --strict --format github --unstaged
+      - run: cslint --sast --fail-on severity=warning --format github --unstaged
 
   semantic:
     runs-on: ubuntu-latest
@@ -83,7 +83,7 @@ jobs:
           dotnet-version: '10.x'
       - run: dotnet build
       - run: dotnet tool install --global Dependably.CsLint
-      - run: cslint --deep --project src/MyApp.csproj --strict --format github
+      - run: cslint --deep --project src/MyApp.csproj --fail-on severity=warning --format github
 ```
 
 > The `dotnet tool install --global Dependably.CsLint` steps above assume the package is published to nuget.org. Until then, install from source instead (`dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint`). `setup-dotnet` can pin `8.x` or `10.x` — the tool ships for both.
@@ -132,13 +132,38 @@ equals `findings.length` (never truncated) and `summary.exitCode` equals the pro
 
 ---
 
+## CI gate (`--fail-on`)
+
+`--fail-on <key>=<value>` is the single, suite-wide CI gate. It is repeatable; the process exits
+**1** if **any** rule trips:
+
+| Rule | Trips when |
+| --- | --- |
+| `severity=<critical\|high\|moderate\|low\|info>` | Any finding is at-or-above the level. cslint ranks `error` = **high** and `warning` = **low** on the shared ladder, so `severity=high` gates on errors and `severity=low` (or its alias `severity=warning`) gates on warnings too. |
+| `count=<N>` | The total number of findings exceeds `N`. |
+
+```bash
+cslint --sast                          # default: errors gate (exit 1), warnings don't
+cslint --sast --fail-on severity=warning   # warnings gate too (the former --strict)
+cslint --global --fail-on count=0          # any finding at all fails the build
+cslint --global --fail-on severity=warning --fail-on count=20   # repeatable; either trips
+```
+
+Default (no `--fail-on`): errors gate, warnings don't. A `.dependably-check` with `"strict": true`
+adds warning-gating; a CLI `--fail-on` overrides the file's gate entirely. A bad value (e.g.
+`--fail-on severity=bogus`) is a usage error (exit 2).
+
+> `--fail-on` replaces the former `--strict` / `-s` flag. `--fail-on severity=warning` reproduces it.
+
+---
+
 ## Pre-commit hook
 
 ```bash
 cslint --install-hook
 ```
 
-Installs a `pre-commit` hook that runs `cslint --sast --strict`. It also blocks commits where `.editorconfig` is staged, preventing AI agents from silently relaxing rules through config changes.
+Installs a `pre-commit` hook that runs `cslint --sast --fail-on severity=warning`. It also blocks commits where `.editorconfig` is staged, preventing AI agents from silently relaxing rules through config changes.
 
 ---
 
@@ -238,13 +263,24 @@ them more rigorously.)
 
 ## `--scan` configuration
 
-Each opinionated rule can be disabled at the command line:
+The opinionated rules OP004/OP005/OP006 are toggled through configuration, not dedicated CLI
+flags. Disable them per-file via `.editorconfig`:
 
-```bash
-cslint --scan --no-magic-numbers    # disable OP004
-cslint --scan --no-bool-flags       # disable OP005
-cslint --scan --no-cancellation     # disable OP006
+```ini
+[*.cs]
+dotnet_diagnostic.OP004.severity = none   # disable magic-number checks
+dotnet_diagnostic.OP005.severity = none   # disable boolean-flag checks
+dotnet_diagnostic.OP006.severity = none   # disable CancellationToken checks
 ```
+
+…or project-wide via the `scan` section of `.dependably-check`:
+
+```json
+{ "cslint": { "scan": { "magicNumbers": false, "boolFlags": false, "cancellation": false } } }
+```
+
+> The former `--no-magic-numbers` / `--no-bool-flags` / `--no-cancellation` flags were removed in
+> favor of these two config paths (they were pure duplicates).
 
 ---
 

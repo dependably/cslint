@@ -140,8 +140,8 @@ class LintEngine
             rules.AddRange(_sastRules);
 
         // Honour AppliesTo so the opinionated toggles (FlagMagicNumbers / FlagBooleanParameters /
-        // FlagMissingCancellationToken — set by --no-* flags and the .dependably-check config)
-        // actually disable their rules.
+        // FlagMissingCancellationToken — set by the .dependably-check `scan` section) actually
+        // disable their rules. (Per-file disabling also works via .editorconfig severity = none.)
         if (mode is LintMode.All)
             rules.AddRange(_opinionatedRules.Where(r => r.AppliesTo(config)));
 

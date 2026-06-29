@@ -164,4 +164,34 @@ public class OpinionatedRuleTests
     {
         Assert.Equal(CsLint.Rules.RuleCategory.Opinionated, new MagicNumberRule(On).Category);
     }
+
+    // The removed --no-magic-numbers / --no-bool-flags / --no-cancellation flags lose nothing:
+    // OP004/005/006 stay disable-able per file via .editorconfig `severity = none`, applied by the
+    // engine's ApplySeverityOverride for every rule. (The .dependably-check `scan` toggles are the
+    // other path; the ScanConfig(false,...) unit tests above already cover that.)
+    [Theory]
+    [InlineData("OP004", "class C { int M() { return 42; } }")]
+    [InlineData("OP005", "class C { public void M(bool flag) { } }")]
+    [InlineData("OP006", "using System.Threading.Tasks; class C { public async Task M() { await Task.Yield(); } }")]
+    public async Task Opinionated_rule_disabled_via_editorconfig_severity_none(string ruleId, string code)
+    {
+        var dir = T.TempDir();
+        var file = Path.Combine(dir, "A.cs");
+        File.WriteAllText(file, code);
+        try
+        {
+            // Control: with no override the rule fires in --scan (LintMode.All). A fresh engine per
+            // phase keeps EditorConfigLoader's per-path cache from serving a stale .editorconfig.
+            File.WriteAllText(Path.Combine(dir, ".editorconfig"), "root = true\n[*.cs]\n");
+            var withRule = await new LintEngine().LintFileAsync(file, LintMode.All);
+            Assert.True(withRule.Has(ruleId));
+
+            // `severity = none` drops the finding entirely.
+            File.WriteAllText(Path.Combine(dir, ".editorconfig"),
+                $"root = true\n[*.cs]\ndotnet_diagnostic.{ruleId}.severity = none\n");
+            var disabled = await new LintEngine().LintFileAsync(file, LintMode.All);
+            Assert.False(disabled.Has(ruleId));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }
