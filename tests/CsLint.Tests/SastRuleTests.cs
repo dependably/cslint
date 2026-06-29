@@ -55,6 +55,28 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST001"));
     }
 
+    // Regression (Roslyn 4.8 -> 4.14): stacked C# 13 constructs — here a `partial` property,
+    // a `params ReadOnlySpan<T>` parameter, and an `allows ref struct` type constraint — broke
+    // Roslyn 4.8's (C# 12 parser) error recovery. On 4.8 the parser skipped the malformed
+    // constraint and dropped the method body's catch clause from the tree entirely, so SAST001
+    // silently failed to fire on a real empty catch buried in modern syntax (verified: this
+    // snippet returns MISSED on 4.8.0). The C# 13 parser in 4.14 keeps the tree intact and the
+    // finding is reported. This test FAILS on 4.8.0 and passes on 4.14.0.
+    [Fact]
+    public async Task SAST001_fires_amid_csharp13_syntax()
+    {
+        var diags = await T.Run(new EmptyCatchRule(),
+            "partial class C\n"
+            + "{\n"
+            + "    public partial string Name { get; }\n"
+            + "    void Log<T>(params System.ReadOnlySpan<T> items) where T : allows ref struct\n"
+            + "    {\n"
+            + "        try { int.Parse(\"1\"); } catch { }\n"
+            + "    }\n"
+            + "}\n");
+        Assert.True(diags.Has("SAST001"));
+    }
+
     [Fact]
     public async Task SAST002_flags_console_writeline()
     {
