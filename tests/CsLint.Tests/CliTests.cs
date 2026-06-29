@@ -84,6 +84,15 @@ public class CliTests
     }
 
     [Fact]
+    public void ParseOptions_version_is_a_recognized_flag()
+    {
+        // --version must be a real flag, not an unknown option (which would exit 2).
+        var o = Cli.ParseOptions(["--version"]);
+        Assert.True(o.ShowVersion);
+        Assert.Null(o.UnknownOption);
+    }
+
+    [Fact]
     public void DetermineMode_maps_options()
     {
         Assert.Equal(LintMode.All, Cli.DetermineMode(Cli.ParseOptions(["--scan"])));
@@ -246,6 +255,17 @@ public class CliTests
         var output = await CaptureRun(["--help"]);
         Assert.Equal(0, output.Code);
         Assert.Contains("cslint v4", output.Text);
+    }
+
+    [Fact]
+    public async Task RunAsync_version_prints_and_exits_zero()
+    {
+        var output = await CaptureRun(["--version"]);
+        Assert.Equal(0, output.Code);
+        Assert.Contains("cslint", output.Text);
+        // The reported version must match the assembly version (e.g. "4.1.0"), not be empty.
+        Assert.Contains(Cli.Version(), output.Text);
+        Assert.Matches(@"\d+\.\d+", output.Text); // a real version number, not "unknown"
     }
 
     [Fact]
