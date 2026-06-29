@@ -88,7 +88,7 @@ class LintEngine
 
     // Run one rule and fold its (severity-adjusted) findings into the list. Kept separate so the
     // try / foreach / if nesting stays shallow.
-    async Task RunRuleAsync(IRule rule, string filePath, FileConfig config, List<Diagnostic> diagnostics)
+    static async Task RunRuleAsync(IRule rule, string filePath, FileConfig config, List<Diagnostic> diagnostics)
     {
         try
         {
