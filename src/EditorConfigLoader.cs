@@ -28,14 +28,9 @@ class EditorConfigLoader
             var configDir = Path.GetDirectoryName(configFile)!;
             var relativePath = GetRelativePath(configDir, filePath);
 
-            foreach (var section in sections)
-            {
-                if (GlobMatches(section.Pattern, relativePath))
-                {
-                    foreach (var (key, value) in section.Properties)
-                        merged[key] = value;
-                }
-            }
+            foreach (var section in sections.Where(s => GlobMatches(s.Pattern, relativePath)))
+                foreach (var (key, value) in section.Properties)
+                    merged[key] = value;
         }
 
         return new FileConfig(merged, configFilesList);
@@ -97,8 +92,7 @@ class EditorConfigLoader
         foreach (var rawLine in lines)
         {
             var line = rawLine.Trim();
-            if (string.IsNullOrEmpty(line) || line.StartsWith('#') || line.StartsWith(';'))
-                continue;
+            if (line.Length == 0 || line[0] is '#' or ';') continue;
 
             if (line.StartsWith('[') && line.EndsWith(']'))
             {
@@ -109,22 +103,30 @@ class EditorConfigLoader
                 continue;
             }
 
-            var eq = line.IndexOf('=');
-            if (eq < 0) continue;
-
-            var key = line[..eq].Trim();
-            var value = line[(eq + 1)..].Trim();
-            var commentIdx = value.IndexOf(" #");
-            if (commentIdx >= 0) value = value[..commentIdx].Trim();
-
-            if (key.Equals("root", StringComparison.OrdinalIgnoreCase)) continue;
-            if (currentPattern != null) currentProps[key] = value;
+            if (currentPattern != null && TryParseProperty(line, out var key, out var value))
+                currentProps[key] = value;
         }
 
         if (currentPattern != null)
             sections.Add(new EditorConfigSection(currentPattern, currentProps));
 
         return sections;
+    }
+
+    static bool TryParseProperty(string line, out string key, out string value)
+    {
+        key = "";
+        value = "";
+
+        var eq = line.IndexOf('=');
+        if (eq < 0) return false;
+
+        key = line[..eq].Trim();
+        value = line[(eq + 1)..].Trim();
+        var commentIdx = value.IndexOf(" #");
+        if (commentIdx >= 0) value = value[..commentIdx].Trim();
+
+        return !key.Equals("root", StringComparison.OrdinalIgnoreCase);
     }
 
     static string GetRelativePath(string configDir, string filePath) =>
@@ -177,8 +179,12 @@ class EditorConfigLoader
         return choices;
     }
 
+    // Bound every regex match so a pathological glob-derived pattern cannot hang the linter (S6444).
+    static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+
     static bool MatchSingle(string pattern, string path) =>
-        Regex.IsMatch(path, GlobToRegex(pattern), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        Regex.IsMatch(path, GlobToRegex(pattern),
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexTimeout);
 
     static string GlobToRegex(string glob)
     {
@@ -187,33 +193,43 @@ class EditorConfigLoader
 
         int i = 0;
         while (i < glob.Length)
-        {
-            char c = glob[i];
-            if (c == '*' && i + 1 < glob.Length && glob[i + 1] == '*')
-            {
-                sb.Append(".*");
-                i += 2;
-                if (i < glob.Length && glob[i] == '/') i++;
-            }
-            else if (c == '*') { sb.Append("[^/]*"); i++; }
-            else if (c == '?') { sb.Append("[^/]"); i++; }
-            else if (c == '[')
-            {
-                var end = glob.IndexOf(']', i + 1);
-                if (end > i)
-                {
-                    var cls = glob[(i + 1)..end];
-                    var neg = cls.StartsWith('!') ? "^" : "";
-                    var body = cls.StartsWith('!') ? cls[1..] : cls;
-                    sb.Append('[').Append(neg).Append(Regex.Escape(body)).Append(']');
-                    i = end + 1;
-                }
-                else { sb.Append(Regex.Escape(c.ToString())); i++; }
-            }
-            else { sb.Append(Regex.Escape(c.ToString())); i++; }
-        }
+            i = AppendGlobToken(sb, glob, i);
 
         sb.Append('$');
         return sb.ToString();
+    }
+
+    static int AppendGlobToken(System.Text.StringBuilder sb, string glob, int i)
+    {
+        char c = glob[i];
+        if (c == '*' && i + 1 < glob.Length && glob[i + 1] == '*')
+        {
+            sb.Append(".*");
+            i += 2;
+            if (i < glob.Length && glob[i] == '/') i++;
+            return i;
+        }
+        if (c == '*') { sb.Append("[^/]*"); return i + 1; }
+        if (c == '?') { sb.Append("[^/]"); return i + 1; }
+        if (c == '[') return AppendCharClass(sb, glob, i);
+
+        sb.Append(Regex.Escape(c.ToString()));
+        return i + 1;
+    }
+
+    static int AppendCharClass(System.Text.StringBuilder sb, string glob, int i)
+    {
+        var end = glob.IndexOf(']', i + 1);
+        if (end <= i)
+        {
+            sb.Append(Regex.Escape(glob[i].ToString()));
+            return i + 1;
+        }
+
+        var cls = glob[(i + 1)..end];
+        var neg = cls.StartsWith('!') ? "^" : "";
+        var body = cls.StartsWith('!') ? cls[1..] : cls;
+        sb.Append('[').Append(neg).Append(Regex.Escape(body)).Append(']');
+        return end + 1;
     }
 }

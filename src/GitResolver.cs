@@ -44,7 +44,7 @@ static class GitResolver
         return (File.Exists(hook) ? hook : null, absHooksDir);
     }
 
-    static IReadOnlyList<string> ParsePaths(string output, string root)
+    static List<string> ParsePaths(string output, string root)
     {
         return output
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

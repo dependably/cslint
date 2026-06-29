@@ -195,29 +195,34 @@ sealed class LineEndingRule : TextRule
 
         for (int i = 0; i < text.Length; i++)
         {
-            if (text[i] == '\r')
-            {
-                bool isCrlf = i + 1 < text.Length && text[i + 1] == '\n';
-                if (eol == "lf")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id,
-                        isCrlf ? "CRLF line ending; expected LF." : "CR line ending; expected LF."));
-                else if (eol == "crlf" && !isCrlf)
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "CR line ending; expected CRLF."));
-                if (isCrlf) i++;
-                lineNum++;
-            }
-            else if (text[i] == '\n')
-            {
-                if (eol == "crlf")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "LF line ending; expected CRLF."));
-                else if (eol == "cr")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "LF line ending; expected CR."));
-                lineNum++;
-            }
+            var c = text[i];
+            if (c != '\r' && c != '\n') continue;
+
+            bool isCrlf = c == '\r' && i + 1 < text.Length && text[i + 1] == '\n';
+            var message = c == '\r' ? CarriageReturnMessage(eol, isCrlf) : LineFeedMessage(eol);
+            if (message != null)
+                diagnostics.Add(Warn(filePath, lineNum, 0, Id, message));
+
+            if (isCrlf) i++;
+            lineNum++;
         }
 
         return diagnostics;
     }
+
+    static string? CarriageReturnMessage(string eol, bool isCrlf) => eol switch
+    {
+        "lf" => isCrlf ? "CRLF line ending; expected LF." : "CR line ending; expected LF.",
+        "crlf" => isCrlf ? null : "CR line ending; expected CRLF.",
+        _ => null
+    };
+
+    static string? LineFeedMessage(string eol) => eol switch
+    {
+        "crlf" => "LF line ending; expected CRLF.",
+        "cr" => "LF line ending; expected CR.",
+        _ => null
+    };
 
     protected override string? ApplyFix(string text, FileConfig config)
     {
@@ -226,8 +231,8 @@ sealed class LineEndingRule : TextRule
         return eol switch
         {
             "crlf" => normalised.Replace("\n", "\r\n"),
-            "cr"   => normalised.Replace("\n", "\r"),
-            _      => normalised
+            "cr" => normalised.Replace("\n", "\r"),
+            _ => normalised
         };
     }
 }

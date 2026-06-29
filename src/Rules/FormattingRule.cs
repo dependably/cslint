@@ -108,7 +108,7 @@ sealed class FormattingRule : IRule
         }
     }
 
-    static IReadOnlyList<Diagnostic> DiffLines(
+    static List<Diagnostic> DiffLines(
         string filePath, string original, string formatted)
     {
         var origLines = original.Split('\n');
@@ -119,21 +119,21 @@ sealed class FormattingRule : IRule
         for (int i = 0; i < maxLen; i++)
         {
             var orig = i < origLines.Length ? origLines[i].TrimEnd('\r') : null;
-            var fmt  = i < fmtLines.Length  ? fmtLines[i].TrimEnd('\r')  : null;
+            var fmt = i < fmtLines.Length ? fmtLines[i].TrimEnd('\r') : null;
 
             if (orig == fmt) continue;
 
             string message = (orig, fmt) switch
             {
-                (null, _)   => "Formatter would insert a line here.",
-                (_, null)   => "Formatter would remove this line.",
+                (null, _) => "Formatter would insert a line here.",
+                (_, null) => "Formatter would remove this line.",
                 _ when orig!.Trim() == fmt!.Trim()
                             => $"Indentation mismatch. Expected '{LeadingWhitespace(fmt!)}', got '{LeadingWhitespace(orig!)}'.",
                 _ when orig!.Trim() is "{" or "}"
                             => "Brace placement does not match csharp_new_line_before_open_brace.",
                 _ when fmt!.Trim() is "{" or "}"
                             => "Brace placement does not match csharp_new_line_before_open_brace.",
-                _           => "Spacing or formatting does not match editorconfig csharp_space_* / csharp_indent_* rules.",
+                _ => "Spacing or formatting does not match editorconfig csharp_space_* / csharp_indent_* rules.",
             };
 
             diagnostics.Add(new(filePath, i + 1, 1, "FMT", message, Severity.Warning));

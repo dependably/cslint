@@ -84,10 +84,10 @@ sealed class NamingRule : IRule
                 _ => Severity.Warning
             };
 
-            var symbols   = ParseSymbols(symbolGroup, props);
+            var symbols = ParseSymbols(symbolGroup, props);
             var modifiers = ParseModifiers(symbolGroup, props);
-            var style     = ParseStyle(styleName, props);
-            var priority  = int.TryParse(props.GetValueOrDefault($"{prefix}priority", "0"), out var p) ? p : 0;
+            var style = ParseStyle(styleName, props);
+            var priority = int.TryParse(props.GetValueOrDefault($"{prefix}priority", "0"), out var p) ? p : 0;
 
             rules.Add(new NamingRuleDefinition(ruleName!, symbols, modifiers, style, severity, priority));
         }
@@ -141,12 +141,12 @@ sealed class NamingRule : IRule
 
         return style.Capitalization.ToLowerInvariant() switch
         {
-            "pascal_case"      => char.IsUpper(work[0]),
-            "camel_case"       => char.IsLower(work[0]),
-            "all_upper"        => work.All(c => !char.IsLetter(c) || char.IsUpper(c)),
-            "all_lower"        => work.All(c => !char.IsLetter(c) || char.IsLower(c)),
+            "pascal_case" => char.IsUpper(work[0]),
+            "camel_case" => char.IsLower(work[0]),
+            "all_upper" => work.All(c => !char.IsLetter(c) || char.IsUpper(c)),
+            "all_lower" => work.All(c => !char.IsLetter(c) || char.IsLower(c)),
             "first_word_upper" => work.Length > 0 && char.IsUpper(work[0]),
-            _                  => true
+            _ => true
         };
     }
 
@@ -158,29 +158,30 @@ sealed class NamingRule : IRule
         return desc;
     }
 
-    static IEnumerable<(string Kind, string? Name, Location? Location)> ExtractSymbols(SyntaxNode node)
+    static (string Kind, string? Name, Location? Location)[] ExtractSymbols(SyntaxNode node)
     {
         return node switch
         {
-            ClassDeclarationSyntax c      => [("class",          c.Identifier.Text,  c.Identifier.GetLocation())],
-            InterfaceDeclarationSyntax i  => [("interface",      i.Identifier.Text,  i.Identifier.GetLocation())],
-            StructDeclarationSyntax s     => [("struct",         s.Identifier.Text,  s.Identifier.GetLocation())],
-            EnumDeclarationSyntax e       => [("enum",           e.Identifier.Text,  e.Identifier.GetLocation())],
-            RecordDeclarationSyntax r     => [("class",          r.Identifier.Text,  r.Identifier.GetLocation())],
-            DelegateDeclarationSyntax d   => [("delegate",       d.Identifier.Text,  d.Identifier.GetLocation())],
-            MethodDeclarationSyntax m     => [("method",         m.Identifier.Text,  m.Identifier.GetLocation())],
-            PropertyDeclarationSyntax p   => [("property",       p.Identifier.Text,  p.Identifier.GetLocation())],
-            EventDeclarationSyntax ev     => [("event",          ev.Identifier.Text, ev.Identifier.GetLocation())],
-            ParameterSyntax par           => [("parameter",      par.Identifier.Text, par.Identifier.GetLocation())],
-            TypeParameterSyntax tp        => [("type_parameter", tp.Identifier.Text, tp.Identifier.GetLocation())],
-            FieldDeclarationSyntax f      => f.Declaration.Variables.Select(v =>
-                ("field", (string?)v.Identifier.Text, (Location?)v.Identifier.GetLocation())).ToArray(),
-            LocalDeclarationStatementSyntax l => l.Declaration.Variables.Select(v =>
-                ("local", (string?)v.Identifier.Text, (Location?)v.Identifier.GetLocation())).ToArray(),
+            ClassDeclarationSyntax c => [("class", c.Identifier.Text, c.Identifier.GetLocation())],
+            InterfaceDeclarationSyntax i => [("interface", i.Identifier.Text, i.Identifier.GetLocation())],
+            StructDeclarationSyntax s => [("struct", s.Identifier.Text, s.Identifier.GetLocation())],
+            EnumDeclarationSyntax e => [("enum", e.Identifier.Text, e.Identifier.GetLocation())],
+            RecordDeclarationSyntax r => [("class", r.Identifier.Text, r.Identifier.GetLocation())],
+            DelegateDeclarationSyntax d => [("delegate", d.Identifier.Text, d.Identifier.GetLocation())],
+            MethodDeclarationSyntax m => [("method", m.Identifier.Text, m.Identifier.GetLocation())],
+            PropertyDeclarationSyntax p => [("property", p.Identifier.Text, p.Identifier.GetLocation())],
+            EventDeclarationSyntax ev => [("event", ev.Identifier.Text, ev.Identifier.GetLocation())],
+            ParameterSyntax par => [("parameter", par.Identifier.Text, par.Identifier.GetLocation())],
+            TypeParameterSyntax tp => [("type_parameter", tp.Identifier.Text, tp.Identifier.GetLocation())],
+            FieldDeclarationSyntax f => f.Declaration.Variables
+                .Select(v => MakeSymbol("field", v.Identifier)).ToArray(),
+            LocalDeclarationStatementSyntax l => l.Declaration.Variables
+                .Select(v => MakeSymbol("local", v.Identifier)).ToArray(),
             _ => []
         };
     }
 
-    static bool IsConst(FieldDeclarationSyntax f) =>
-        f.Modifiers.Any(SyntaxKind.ConstKeyword);
+    static (string Kind, string? Name, Location? Location) MakeSymbol(
+        string kind, SyntaxToken identifier) =>
+        (kind, identifier.Text, identifier.GetLocation());
 }
