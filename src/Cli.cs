@@ -23,14 +23,20 @@ static class Cli
             return ExitUsageError;
         }
 
+        if (options.OptionError != null)
+        {
+            Console.Error.WriteLine(options.OptionError);
+            return ExitUsageError;
+        }
+
         if (options.ShowHelp) { PrintHelp(); return 0; }
         if (options.ShowVersion) { PrintVersion(); return 0; }
         if (options.InstallHook) return InstallGitHook(options.Root);
 
         EnsureMsBuildOrFallback(options);
 
-        // Shared .dependably-check config (repo root). CLI flags win: --strict / --no-* can only
-        // further restrict what the file allows.
+        // Shared .dependably-check config (repo root). CLI flags win: the scan toggles and the
+        // gate live in the file, and a CLI --fail-on overrides the file's gate entirely.
         CsLintConfig config;
         try
         {
@@ -79,15 +85,24 @@ static class Cli
         }
     }
 
-    // Fold the .dependably-check config into the options. CLI flags only ever restrict further:
-    // --strict forces strict on; a --no-* flag (already off here) can't be re-enabled by the file.
+    // Fold the .dependably-check config into the options. The opinionated scan rules are toggled
+    // by the file's `scan` section (and by .editorconfig severity overrides). The CI gate comes
+    // from CLI --fail-on, which wins outright; otherwise the default (errors gate) plus the
+    // file's `strict` (warnings gate too) applies.
     static void ApplyConfig(CliOptions options, CsLintConfig config)
     {
-        options.Strict = options.Strict || config.Strict;
         options.FlagMagicNumbers = options.FlagMagicNumbers && config.ScanMagicNumbers;
         options.FlagBoolFlags = options.FlagBoolFlags && config.ScanBoolFlags;
         options.FlagCancellationToken = options.FlagCancellationToken && config.ScanCancellation;
         options.Exclude = [.. options.Exclude, .. config.Exclude]; // CLI globs + config globs
+
+        if (options.FailOn.Count == 0)
+        {
+            // No CLI gate: errors always gate; the config's `strict` adds warning-gating.
+            options.FailOn.Add(new FailOnRule(FailOnKind.Severity, RankHigh));
+            if (config.Strict)
+                options.FailOn.Add(new FailOnRule(FailOnKind.Severity, RankLow));
+        }
     }
 
     // Syntactic findings, plus Roslyn semantic diagnostics when --deep --project is in play.
@@ -107,8 +122,8 @@ static class Cli
         return allDiagnostics;
     }
 
-    // Print the report + summary line and return the process exit code (1 on errors, or on
-    // warnings under --strict).
+    // Print the report + summary line and return the process exit code: 1 when the --fail-on
+    // gate trips, else 0.
     static int ReportAndExit(
         IReadOnlyList<Diagnostic> allDiagnostics, CliOptions options, Summary summary, LintMode mode)
     {
@@ -117,8 +132,9 @@ static class Cli
         var warnings = allDiagnostics.Count(d => d.Severity == Severity.Warning);
 
         // Compute the real exit code up front so the JSON envelope's summary.exitCode can carry
-        // the exact value the process will return (1 on errors, or on warnings under --strict).
-        var exitCode = errors > 0 || (options.Strict && warnings > 0) ? 1 : 0;
+        // the exact value the process will return.
+        var tripped = GateTripped(options.FailOn, errors, warnings, allDiagnostics.Count);
+        var exitCode = tripped ? 1 : 0;
 
         Reporter.Write(allDiagnostics, options.Format, options.Root, totalFiles, exitCode, Version());
 
@@ -129,21 +145,35 @@ static class Cli
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode ? " + semantic" : "") + ".");
 
-        if (options.Strict && warnings > 0 && errors == 0)
+        // When the gate trips without any errors, the trigger (warnings, or a count threshold) is
+        // not otherwise obvious from the report — say so explicitly.
+        if (tripped && errors == 0)
         {
+            const string note = "--fail-on: gate tripped (no errors, but a severity/count threshold was breached).";
             if (options.Format == OutputFormat.Human)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("--strict: warnings treated as errors.");
+                Console.WriteLine(note);
                 Console.ResetColor();
             }
             else
             {
-                Console.Error.WriteLine("--strict: warnings treated as errors.");
+                Console.Error.WriteLine(note);
             }
         }
 
         return exitCode;
+    }
+
+    // Evaluate the CI gate: exit 1 if ANY --fail-on rule trips. A severity rule trips when the
+    // most severe finding present is at-or-above the rule's level (cslint ranks error=high,
+    // warning=low); a count rule trips when the total finding count exceeds its threshold.
+    static bool GateTripped(IReadOnlyList<FailOnRule> rules, int errors, int warnings, int total)
+    {
+        int maxRank = errors > 0 ? RankHigh : warnings > 0 ? RankLow : -1;
+        return rules.Any(r => r.Kind == FailOnKind.Severity
+            ? maxRank >= r.Threshold
+            : total > r.Threshold);
     }
 
     public static LintMode DetermineMode(CliOptions opts)
@@ -302,7 +332,7 @@ static class Cli
                 echo "error: .editorconfig is staged. Review config changes before committing." >&2
                 exit 1
             fi
-            cslint --sast --strict --format human
+            cslint --sast --fail-on severity=warning --format human
             exit $?
             """);
 
@@ -344,15 +374,11 @@ static class Cli
             case "--global" or "-g": opts.Global = true; return true;
             case "--unstaged": opts.Unstaged = true; return true;
             case "--fix": opts.Fix = true; return true;
-            case "--strict" or "-s": opts.Strict = true; return true;
             case "--verbose" or "-v": opts.Verbose = true; return true;
             case "--install-hook": opts.InstallHook = true; return true;
             case "--sast": opts.SastMode = true; return true;
             case "--scan": opts.ScanMode = true; return true;
             case "--deep": opts.DeepMode = true; return true;
-            case "--no-magic-numbers": opts.FlagMagicNumbers = false; return true;
-            case "--no-bool-flags": opts.FlagBoolFlags = false; return true;
-            case "--no-cancellation": opts.FlagCancellationToken = false; return true;
             default: return false;
         }
     }
@@ -369,12 +395,65 @@ static class Cli
         ["-r"] = (o, v) => o.Root = Path.GetFullPath(v),
         ["--config"] = (o, v) => o.ConfigPath = Path.GetFullPath(v),
         ["--exclude"] = (o, v) => o.Exclude.Add(v),
+        ["--fail-on"] = ParseFailOn,
     };
 
     static void SetFormat(CliOptions opts, string value)
     {
         if (Enum.TryParse<OutputFormat>(value, true, out var fmt)) opts.Format = fmt;
     }
+
+    // cslint's two severities on the shared suite ladder: an error is `high`, a warning is `low`.
+    const int RankHigh = 3;
+    const int RankLow = 1;
+
+    // Parse one `--fail-on <key>=<value>` rule (repeatable). Recognised keys:
+    //   severity=<critical|high|moderate|low|info>  (also accepts the raw words error/warning)
+    //   count=<N>
+    // A malformed key or value records an OptionError so the run exits 2 (usage error).
+    static void ParseFailOn(CliOptions opts, string value)
+    {
+        var eq = value.IndexOf('=');
+        if (eq <= 0)
+        {
+            opts.OptionError ??= $"invalid --fail-on '{value}' (expected key=value, e.g. severity=warning)";
+            return;
+        }
+
+        var key = value[..eq].Trim().ToLowerInvariant();
+        var val = value[(eq + 1)..].Trim();
+        switch (key)
+        {
+            case "severity":
+                var rank = SeverityRank(val);
+                if (rank is null)
+                    opts.OptionError ??= $"invalid --fail-on severity '{val}' (expected critical|high|moderate|low|info)";
+                else
+                    opts.FailOn.Add(new FailOnRule(FailOnKind.Severity, rank.Value));
+                break;
+            case "count":
+                if (int.TryParse(val, out var n) && n >= 0)
+                    opts.FailOn.Add(new FailOnRule(FailOnKind.Count, n));
+                else
+                    opts.OptionError ??= $"invalid --fail-on count '{val}' (expected a non-negative integer)";
+                break;
+            default:
+                opts.OptionError ??= $"unknown --fail-on key '{key}' (expected 'severity' or 'count')";
+                break;
+        }
+    }
+
+    // Map a severity token to its rank on the shared suite ladder (info=0 .. critical=4). Accepts
+    // the canonical ladder words plus the P2a raw words error (=high) and warning (=low).
+    static int? SeverityRank(string token) => token.Trim().ToLowerInvariant() switch
+    {
+        "critical" => 4,
+        "high" or "error" => 3,
+        "moderate" => 2,
+        "low" or "warning" => 1,
+        "info" => 0,
+        _ => null,
+    };
 
     // Options that take a following value (and bare positional paths). Returns the (possibly
     // advanced) index after consuming any value argument.
@@ -448,29 +527,34 @@ static class Cli
 
             OUTPUT
               --format, -f  human (default) | json | github
-              --strict, -s  Treat warnings as errors (exit 1)
               --fix         Auto-fix EditorConfig violations where possible
               --explain <f> Show which rules apply to a file and why
 
-            SCAN OPTIONS (--scan)
-              --no-magic-numbers    Disable OP004 (magic numbers)
-              --no-bool-flags       Disable OP005 (boolean flag arguments)
-              --no-cancellation     Disable OP006 (missing CancellationToken)
+            CI GATE
+              --fail-on <k>=<v>  Exit 1 when the gate trips (repeatable). Keys:
+                severity=<critical|high|moderate|low|info>  Trip if any finding is at-or-above the
+                                                            level (cslint: error=high, warning=low).
+                count=<N>                                   Trip when total findings exceed N.
+              Default (no --fail-on): errors gate (exit 1), warnings don't.
+              `--fail-on severity=warning` gates on warnings too (the former --strict).
 
-            SUPPRESSING / RETUNING FINDINGS
+            DISABLING / RETUNING FINDINGS
               Any rule's severity can be set per file/glob from .editorconfig:
                 dotnet_diagnostic.SAST002.severity = none      # silence (e.g. console output in a CLI)
-                dotnet_diagnostic.OP004.severity   = error     # promote
+                dotnet_diagnostic.OP004.severity   = none      # disable OP004 (magic numbers)
+                dotnet_diagnostic.OP004.severity   = error     # or promote it
               Levels: none/silent (drop) | suggestion | warning | error.
+              The opinionated scan rules (OP004/005/006) can also be toggled off in
+              .dependably-check (cslint.scan.{magicNumbers,boolFlags,cancellation}).
 
             CONFIG
               --config <f>  Path to a .dependably-check JSON file. When omitted, it is discovered
                             by walking up from --root to the repo boundary. The `cslint` (and
-                            shared `common`) section can set `strict` and the `scan` toggles;
-                            CLI flags above take precedence.
+                            shared `common`) section can set `strict` (warnings gate too) and the
+                            `scan` toggles; a CLI --fail-on overrides the file's gate.
 
             OTHER
-              --install-hook  Install pre-commit hook (runs --sast --strict)
+              --install-hook  Install pre-commit hook (runs --sast --fail-on severity=warning)
               --verbose, -v   Show workspace diagnostics in --deep mode
               --root, -r      Project root (default: cwd)
               --help, -h      Show this help
@@ -495,7 +579,6 @@ sealed class CliOptions
     public bool Global { get; set; }
     public bool Unstaged { get; set; }
     public bool Fix { get; set; }
-    public bool Strict { get; set; }
     public bool Verbose { get; set; }
     public bool InstallHook { get; set; }
     public bool SastMode { get; set; }
@@ -509,10 +592,24 @@ sealed class CliOptions
     public List<string> Files { get; set; } = [];
     public List<string> Exclude { get; set; } = [];
 
+    // The CI gate rules from --fail-on (repeatable). Empty after parsing means "use the default"
+    // (errors gate; the config's `strict` may add warning-gating) — filled in by ApplyConfig.
+    public List<FailOnRule> FailOn { get; set; } = [];
+
     // First unrecognized token that looked like a flag (starts with '-'). Non-null => usage error.
     public string? UnknownOption { get; set; }
+
+    // First malformed option value (e.g. a bad --fail-on key/value). Non-null => usage error.
+    public string? OptionError { get; set; }
 
     public bool FlagMagicNumbers { get; set; } = true;
     public bool FlagBoolFlags { get; set; } = true;
     public bool FlagCancellationToken { get; set; } = true;
 }
+
+// The kind of CI gate a --fail-on rule expresses.
+enum FailOnKind { Severity, Count }
+
+// One --fail-on gate rule. For Severity, Threshold is a ladder rank (info=0 .. critical=4); for
+// Count, Threshold is the maximum allowed number of findings (trip when total exceeds it).
+readonly record struct FailOnRule(FailOnKind Kind, int Threshold);

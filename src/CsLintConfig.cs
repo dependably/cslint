@@ -12,9 +12,10 @@ namespace CsLint;
 ///               "exclude": ["**/Generated/**"],
 ///               "scan": { "magicNumbers": true, "boolFlags": true, "cancellation": true } } }
 /// </code>
-/// CLI flags always take precedence over the file (a flag can only further restrict: --strict
-/// forces strict on; --no-* forces a scan rule off; --exclude adds to the configured globs).
-/// Unknown keys and other sections are ignored.
+/// The <c>strict</c> key makes warnings gate too (equivalent to <c>--fail-on severity=warning</c>);
+/// a CLI <c>--fail-on</c> overrides the file's gate, and <c>--exclude</c> adds to the configured
+/// globs. The <c>scan</c> toggles disable the opinionated rules OP004/005/006 (which are also
+/// silenceable per file via <c>.editorconfig</c>). Unknown keys and other sections are ignored.
 /// </summary>
 sealed class CsLintConfig
 {

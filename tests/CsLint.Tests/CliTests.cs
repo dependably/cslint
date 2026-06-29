@@ -8,10 +8,9 @@ public class CliTests
     [Fact]
     public void ParseOptions_boolean_flags()
     {
-        var o = Cli.ParseOptions(["--global", "--fix", "--strict", "--verbose", "--unstaged"]);
+        var o = Cli.ParseOptions(["--global", "--fix", "--verbose", "--unstaged"]);
         Assert.True(o.Global);
         Assert.True(o.Fix);
-        Assert.True(o.Strict);
         Assert.True(o.Verbose);
         Assert.True(o.Unstaged);
     }
@@ -44,12 +43,51 @@ public class CliTests
     }
 
     [Fact]
-    public void ParseOptions_no_flags_disable_scans()
+    public void ParseOptions_removed_rule_toggle_flags_are_unknown_options()
     {
-        var o = Cli.ParseOptions(["--no-magic-numbers", "--no-bool-flags", "--no-cancellation"]);
-        Assert.False(o.FlagMagicNumbers);
-        Assert.False(o.FlagBoolFlags);
-        Assert.False(o.FlagCancellationToken);
+        // The old --no-magic-numbers / --no-bool-flags / --no-cancellation flags were removed (pure
+        // config dupes). They must now be rejected as unknown options, not silently ignored.
+        Assert.Equal("--no-magic-numbers", Cli.ParseOptions(["--no-magic-numbers"]).UnknownOption);
+        Assert.Equal("--no-bool-flags", Cli.ParseOptions(["--no-bool-flags"]).UnknownOption);
+        Assert.Equal("--no-cancellation", Cli.ParseOptions(["--no-cancellation"]).UnknownOption);
+    }
+
+    [Fact]
+    public void ParseOptions_strict_flag_is_removed()
+    {
+        // --strict was replaced by `--fail-on severity=warning`; it is now an unknown option.
+        Assert.Equal("--strict", Cli.ParseOptions(["--strict"]).UnknownOption);
+        Assert.Equal("-s", Cli.ParseOptions(["-s"]).UnknownOption);
+    }
+
+    [Fact]
+    public void ParseOptions_fail_on_severity_and_count()
+    {
+        var sev = Cli.ParseOptions(["--fail-on", "severity=warning"]);
+        Assert.Null(sev.OptionError);
+        Assert.Contains(sev.FailOn, r => r.Kind == FailOnKind.Severity && r.Threshold == 1); // warning=low
+
+        var high = Cli.ParseOptions(["--fail-on", "severity=high"]);
+        Assert.Contains(high.FailOn, r => r.Kind == FailOnKind.Severity && r.Threshold == 3);
+
+        var count = Cli.ParseOptions(["--fail-on", "count=5"]);
+        Assert.Null(count.OptionError);
+        Assert.Contains(count.FailOn, r => r.Kind == FailOnKind.Count && r.Threshold == 5);
+
+        // Repeatable: both rules accumulate.
+        var both = Cli.ParseOptions(["--fail-on", "severity=low", "--fail-on", "count=10"]);
+        Assert.Null(both.OptionError);
+        Assert.Equal(2, both.FailOn.Count);
+    }
+
+    [Fact]
+    public void ParseOptions_fail_on_bad_value_is_a_usage_error()
+    {
+        Assert.NotNull(Cli.ParseOptions(["--fail-on", "severity=bogus"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--fail-on", "count=-1"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--fail-on", "count=abc"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--fail-on", "nonsense"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--fail-on", "loudness=11"]).OptionError);
     }
 
     [Fact]
@@ -70,9 +108,9 @@ public class CliTests
         Assert.Equal("--stict", Cli.ParseOptions(["--stict"]).UnknownOption); // typo'd --strict
 
         // Valid flags, valued-flag values, and positional paths are not treated as unknown.
-        var ok = Cli.ParseOptions(["--strict", "--format", "json", "Foo.cs"]);
+        var ok = Cli.ParseOptions(["--fail-on", "severity=warning", "--format", "json", "Foo.cs"]);
         Assert.Null(ok.UnknownOption);
-        Assert.True(ok.Strict);
+        Assert.NotEmpty(ok.FailOn);
         Assert.Single(ok.Files);
 
         // The reported unknown option is the first one encountered.
@@ -288,18 +326,58 @@ public class CliTests
     }
 
     [Fact]
-    public async Task RunAsync_strict_fails_on_warnings()
+    public async Task RunAsync_fail_on_severity_warning_fails_on_warnings()
     {
         var dir = T.TempDir();
         File.WriteAllText(Path.Combine(dir, ".editorconfig"),
             "root = true\n[*.cs]\nindent_style = space\n");
-        File.WriteAllText(Path.Combine(dir, "A.cs"), "\tclass A { }");
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "\tclass A { }"); // tab -> EC001 warning
         try
         {
-            var output = await CaptureRun(["--global", "--strict", "--root", dir]);
+            // `--fail-on severity=warning` gates on warnings (the former --strict behavior).
+            var output = await CaptureRun(["--global", "--fail-on", "severity=warning", "--root", dir]);
             Assert.Equal(1, output.Code);
         }
         finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RunAsync_default_does_not_fail_on_warnings()
+    {
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, ".editorconfig"),
+            "root = true\n[*.cs]\nindent_style = space\n");
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "\tclass A { }"); // tab -> EC001 warning only
+        try
+        {
+            // Default gate: errors gate, warnings don't — a warning-only run exits 0.
+            var output = await CaptureRun(["--global", "--root", dir]);
+            Assert.Equal(0, output.Code);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RunAsync_fail_on_count_fails_when_findings_exceed_threshold()
+    {
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, ".editorconfig"),
+            "root = true\n[*.cs]\nindent_style = space\n");
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "\tclass A { }"); // one EC001 warning
+        try
+        {
+            // count=0 trips on any finding; count=5 does not (1 finding <= 5).
+            Assert.Equal(1, (await CaptureRun(["--global", "--fail-on", "count=0", "--root", dir])).Code);
+            Assert.Equal(0, (await CaptureRun(["--global", "--fail-on", "count=5", "--root", dir])).Code);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RunAsync_bad_fail_on_value_exits_two()
+    {
+        var output = await CaptureRun(["--global", "--fail-on", "severity=bogus"]);
+        Assert.Equal(2, output.Code);
     }
 
     [Fact]
