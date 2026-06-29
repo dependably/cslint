@@ -11,6 +11,9 @@ namespace CsLint;
 /// </summary>
 static class PathFilter
 {
+    // Bound every regex match so a pathological glob-derived pattern cannot hang the linter (S6444).
+    static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+
     public static bool IsExcluded(string path, string root, IReadOnlyList<string> globs)
     {
         if (globs.Count == 0) return false;
@@ -26,7 +29,7 @@ static class PathFilter
             {
                 if (rel.Contains(pattern, StringComparison.Ordinal)) return true;
             }
-            else if (Regex.IsMatch(rel, "(^|/)" + GlobToRegex(pattern) + "$"))
+            else if (Regex.IsMatch(rel, "(^|/)" + GlobToRegex(pattern) + "$", RegexOptions.None, RegexTimeout))
             {
                 return true;
             }

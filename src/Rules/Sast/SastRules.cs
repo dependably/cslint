@@ -8,9 +8,9 @@ sealed class EmptyCatchRule : IRule
 {
     public string Id => "SAST001";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -55,12 +55,12 @@ sealed class ConsoleOutputRule : IRule
 {
     public string Id => "SAST002";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
     static readonly HashSet<string> Methods = new(StringComparer.Ordinal) { "WriteLine", "Write", "Error", "Out" };
     static readonly HashSet<string> Classes = new(StringComparer.Ordinal) { "Console", "Debug", "Trace" };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         if (IsTestFile(filePath)) return [];
 
@@ -109,7 +109,7 @@ sealed class SqlInjectionRule : IRule
 {
     public string Id => "SAST003";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
     static readonly HashSet<string> DangerousMethods = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -119,7 +119,7 @@ sealed class SqlInjectionRule : IRule
         "CreateCommand",
     };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -152,8 +152,8 @@ sealed class SqlInjectionRule : IRule
         invocation.Expression switch
         {
             MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
-            IdentifierNameSyntax id        => id.Identifier.Text,
-            _                              => null
+            IdentifierNameSyntax id => id.Identifier.Text,
+            _ => null
         };
 }
 
@@ -161,7 +161,7 @@ sealed class HardcodedSecretRule : IRule
 {
     public string Id => "SAST004";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
     static readonly string[] SecretKeywords =
         ["password", "passwd", "secret", "apikey", "api_key", "token", "privatekey", "private_key", "connectionstring"];
@@ -170,7 +170,7 @@ sealed class HardcodedSecretRule : IRule
         ["changeme", "password", "secret", "admin", "test", "yourdomain.com", "example.com", "todo", "fixme", "xxx",
          "your-secret-here", "your_secret_here"];
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -178,55 +178,60 @@ sealed class HardcodedSecretRule : IRule
         var diagnostics = new List<Diagnostic>();
 
         foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
-        {
-            if (assignment.Right is not LiteralExpressionSyntax lit) continue;
-            if (!lit.IsKind(SyntaxKind.StringLiteralExpression)) continue;
-
-            var lhsName = GetAssigneeName(assignment.Left)?.ToLowerInvariant();
-            if (lhsName == null) continue;
-
-            var value = lit.Token.ValueText;
-
-            if (SecretKeywords.Any(kw => lhsName.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
-            {
-                var loc = assignment.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-                    $"Possible hardcoded credential in '{GetAssigneeName(assignment.Left)}'.", Severity.Error));
-            }
-            else if (PlaceholderValues.Any(p => value.Equals(p, StringComparison.OrdinalIgnoreCase)))
-            {
-                var loc = assignment.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-                    $"Placeholder value '{value}' left in source.", Severity.Warning));
-            }
-        }
+            CheckAssignment(filePath, assignment, diagnostics);
 
         foreach (var init in root.DescendantNodes().OfType<VariableDeclaratorSyntax>())
-        {
-            if (init.Initializer?.Value is not LiteralExpressionSyntax lit2) continue;
-            if (!lit2.IsKind(SyntaxKind.StringLiteralExpression)) continue;
-
-            var name  = init.Identifier.Text.ToLowerInvariant();
-            var value = lit2.Token.ValueText;
-
-            if (SecretKeywords.Any(kw => name.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
-            {
-                var loc = init.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-                    $"Possible hardcoded credential in variable '{init.Identifier.Text}'.", Severity.Error));
-            }
-        }
+            CheckDeclarator(filePath, init, diagnostics);
 
         return diagnostics;
+    }
+
+    void CheckAssignment(string filePath, AssignmentExpressionSyntax assignment, List<Diagnostic> diagnostics)
+    {
+        if (assignment.Right is not LiteralExpressionSyntax lit) return;
+        if (!lit.IsKind(SyntaxKind.StringLiteralExpression)) return;
+
+        var lhsName = GetAssigneeName(assignment.Left)?.ToLowerInvariant();
+        if (lhsName == null) return;
+
+        var value = lit.Token.ValueText;
+        var loc = assignment.GetLocation().GetLineSpan();
+
+        if (SecretKeywords.Any(kw => lhsName.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
+        {
+            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+                $"Possible hardcoded credential in '{GetAssigneeName(assignment.Left)}'.", Severity.Error));
+        }
+        else if (PlaceholderValues.Any(p => value.Equals(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+                $"Placeholder value '{value}' left in source.", Severity.Warning));
+        }
+    }
+
+    void CheckDeclarator(string filePath, VariableDeclaratorSyntax init, List<Diagnostic> diagnostics)
+    {
+        if (init.Initializer?.Value is not LiteralExpressionSyntax lit) return;
+        if (!lit.IsKind(SyntaxKind.StringLiteralExpression)) return;
+
+        var name = init.Identifier.Text.ToLowerInvariant();
+        var value = lit.Token.ValueText;
+
+        if (SecretKeywords.Any(kw => name.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
+        {
+            var loc = init.GetLocation().GetLineSpan();
+            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+                $"Possible hardcoded credential in variable '{init.Identifier.Text}'.", Severity.Error));
+        }
     }
 
     static bool IsEmpty(string v) => v.Replace("*", "").Replace(" ", "").Length == 0;
 
     static string? GetAssigneeName(ExpressionSyntax expr) => expr switch
     {
-        IdentifierNameSyntax id        => id.Identifier.Text,
+        IdentifierNameSyntax id => id.Identifier.Text,
         MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
-        _                              => null
+        _ => null
     };
 }
 
@@ -234,9 +239,9 @@ sealed class FireAndForgetRule : IRule
 {
     public string Id => "SAST005";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -244,32 +249,38 @@ sealed class FireAndForgetRule : IRule
         var diagnostics = new List<Diagnostic>();
 
         foreach (var stmt in root.DescendantNodes().OfType<ExpressionStatementSyntax>())
-        {
-            if (stmt.Expression is not InvocationExpressionSyntax invocation) continue;
-            var methodName = GetMethodName(invocation);
-            if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) continue;
-            if (IsInsideAwaitExpression(stmt)) continue;
-
-            var loc = stmt.GetLocation().GetLineSpan();
-            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-                $"Fire-and-forget: '{methodName}' result not awaited. Unhandled exceptions will be silently lost.",
-                Severity.Error));
-        }
+            CheckUnawaited(filePath, stmt, diagnostics);
 
         foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
-        {
-            if (assignment.Left is not IdentifierNameSyntax id || id.Identifier.Text != "_") continue;
-            if (assignment.Right is not InvocationExpressionSyntax invocation) continue;
-            var methodName = GetMethodName(invocation);
-            if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) continue;
-
-            var loc = assignment.GetLocation().GetLineSpan();
-            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-                $"Fire-and-forget via discard: '{methodName}' exceptions discarded. Consider .ConfigureAwait or explicit error handling.",
-                Severity.Warning));
-        }
+            CheckDiscardedAsync(filePath, assignment, diagnostics);
 
         return diagnostics;
+    }
+
+    void CheckUnawaited(string filePath, ExpressionStatementSyntax stmt, List<Diagnostic> diagnostics)
+    {
+        if (stmt.Expression is not InvocationExpressionSyntax invocation) return;
+        var methodName = GetMethodName(invocation);
+        if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) return;
+        if (IsInsideAwaitExpression(stmt)) return;
+
+        var loc = stmt.GetLocation().GetLineSpan();
+        diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+            $"Fire-and-forget: '{methodName}' result not awaited. Unhandled exceptions will be silently lost.",
+            Severity.Error));
+    }
+
+    void CheckDiscardedAsync(string filePath, AssignmentExpressionSyntax assignment, List<Diagnostic> diagnostics)
+    {
+        if (assignment.Left is not IdentifierNameSyntax id || id.Identifier.Text != "_") return;
+        if (assignment.Right is not InvocationExpressionSyntax invocation) return;
+        var methodName = GetMethodName(invocation);
+        if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) return;
+
+        var loc = assignment.GetLocation().GetLineSpan();
+        diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+            $"Fire-and-forget via discard: '{methodName}' exceptions discarded. Consider .ConfigureAwait or explicit error handling.",
+            Severity.Warning));
     }
 
     static bool IsInsideAwaitExpression(SyntaxNode node) =>
@@ -281,8 +292,8 @@ sealed class FireAndForgetRule : IRule
         invocation.Expression switch
         {
             MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
-            IdentifierNameSyntax id        => id.Identifier.Text,
-            _                              => null
+            IdentifierNameSyntax id => id.Identifier.Text,
+            _ => null
         };
 }
 
@@ -290,9 +301,9 @@ sealed class PragmaDisableRule : IRule
 {
     public string Id => "SAST006";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -322,11 +333,12 @@ sealed class PragmaDisableRule : IRule
     {
         var lines = source.Split('\n');
         if (lineNum - 1 >= lines.Length) return false;
-        var line       = lines[lineNum - 1];
+        var line = lines[lineNum - 1];
         var commentIdx = line.IndexOf("//", StringComparison.Ordinal);
         if (commentIdx < 0) return false;
         const int minJustificationLength = 5;
-        return line[(commentIdx + 2)..].Trim().Length > minJustificationLength;
+        const int commentMarkerLength = 2; // "//"
+        return line[(commentIdx + commentMarkerLength)..].Trim().Length > minJustificationLength;
     }
 }
 
@@ -334,9 +346,9 @@ sealed class ThreadSleepInAsyncRule : IRule
 {
     public string Id => "SAST007";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -369,9 +381,9 @@ sealed class DynamicUsageRule : IRule
 {
     public string Id => "SAST008";
     public RuleCategory Category => RuleCategory.Sast;
-    public bool AppliesTo(FileConfig _) => true;
+    public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);

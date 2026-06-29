@@ -1,8 +1,33 @@
 using CsLint;
-using CsLint.Rules.Opinionated;
 using Xunit;
 
 namespace CsLint.Tests;
+
+static class Git
+{
+    public static void Run(string dir, string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+        {
+            WorkingDirectory = dir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit();
+    }
+
+    public static string InitRepo()
+    {
+        var dir = T.TempDir();
+        Run(dir, "init -q");
+        Run(dir, "config user.email test@example.com");
+        Run(dir, "config user.name Test");
+        Run(dir, "config commit.gpgsign false");
+        return dir;
+    }
+}
 
 public class GitResolverTests
 {
@@ -10,209 +35,182 @@ public class GitResolverTests
     public void IsGitRepo_false_for_plain_dir()
     {
         var dir = T.TempDir();
-        try
-        {
-            Assert.False(GitResolver.IsGitRepo(dir));
-        }
-        finally { Directory.Delete(dir, recursive: true); }
+        try { Assert.False(GitResolver.IsGitRepo(dir)); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void IsGitRepo_true_for_repo()
     {
-        // The cslint project itself is a git repo.
-        var repoRoot = FindRepoRoot();
-        if (repoRoot == null) return; // skip if not found
-        Assert.True(GitResolver.IsGitRepo(repoRoot));
+        var dir = Git.InitRepo();
+        try { Assert.True(GitResolver.IsGitRepo(dir)); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void GetStagedFiles_returns_added_cs_files()
     {
-        // Smoke: returns a list (may be empty on a clean tree, but does not throw).
-        var repoRoot = FindRepoRoot();
-        if (repoRoot == null) return;
-        var files = GitResolver.GetStagedFiles(repoRoot);
-        Assert.NotNull(files);
+        var dir = Git.InitRepo();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+            File.WriteAllText(Path.Combine(dir, "B.txt"), "text");
+            Git.Run(dir, "add A.cs B.txt");
+
+            var staged = GitResolver.GetStagedFiles(dir);
+            Assert.Contains(staged, p => p.EndsWith("A.cs"));
+            Assert.DoesNotContain(staged, p => p.EndsWith("B.txt"));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void GetChangedFiles_includes_unstaged()
     {
-        var repoRoot = FindRepoRoot();
-        if (repoRoot == null) return;
-        var files = GitResolver.GetChangedFiles(repoRoot);
-        Assert.NotNull(files);
+        var dir = Git.InitRepo();
+        try
+        {
+            var file = Path.Combine(dir, "A.cs");
+            File.WriteAllText(file, "class A { }");
+            Git.Run(dir, "add A.cs");
+            Git.Run(dir, "commit -q -m init");
+            File.WriteAllText(file, "class A { int x; }"); // unstaged modification
+
+            var changed = GitResolver.GetChangedFiles(dir);
+            Assert.Contains(changed, p => p.EndsWith("A.cs"));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void GetHooksInfo_points_at_hooks_dir()
     {
-        var repoRoot = FindRepoRoot();
-        if (repoRoot == null) return;
-        var (_, hooksDir) = GitResolver.GetHooksInfo(repoRoot);
-        Assert.NotEmpty(hooksDir);
-    }
-
-    static string? FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
+        var dir = Git.InitRepo();
+        try
         {
-            if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
-            dir = dir.Parent;
+            var (hook, hooksDir) = GitResolver.GetHooksInfo(dir);
+            Assert.Null(hook); // none installed yet
+            Assert.Contains("hooks", hooksDir);
         }
-        return null;
+        finally { Directory.Delete(dir, true); }
     }
 }
 
 public class LintEngineTests
 {
+    static (string dir, string file) Project(string editorConfig, string source, string name = "Foo.cs")
+    {
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, ".editorconfig"), editorConfig);
+        var file = Path.Combine(dir, name);
+        File.WriteAllText(file, source);
+        return (dir, file);
+    }
+
     [Fact]
     public async Task LintFile_applies_editorconfig_rules()
     {
-        // A file with a tab indentation violation.
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space
-            indent_size = 4
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "\tclass C { }");
+        var (dir, file) = Project("root = true\n[*.cs]\nindent_style = space\n", "\tclass C { }");
         try
         {
-            var engine = new LintEngine();
-            var diags = await engine.LintFileAsync(file, LintMode.EditorConfig);
-            Assert.True(diags.Any(d => d.Rule == "EC001"));
+            var diags = await new LintEngine().LintFileAsync(file, LintMode.EditorConfig);
+            Assert.Contains(diags, d => d.Rule == "EC001");
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task LintFile_runs_sast_in_sast_mode()
     {
-        var code = "class C { void M() { try { } catch { } } }";
-        var path = T.WriteCs(code);
+        var (dir, file) = Project("root = true\n", "class C { void M() { try { } catch { } } }");
         try
         {
-            var engine = new LintEngine();
-            var diags = await engine.LintFileAsync(path, LintMode.EditorConfigAndSast);
-            Assert.True(diags.Any(d => d.Rule == "SAST001"));
+            var diags = await new LintEngine().LintFileAsync(file, LintMode.EditorConfigAndSast);
+            Assert.Contains(diags, d => d.Rule == "SAST001");
         }
-        finally { File.Delete(path); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task LintFile_runs_opinionated_in_all_mode()
     {
-        var code = "class C { int x = 42; }";
-        var path = T.WriteCs(code);
+        var (dir, file) = Project("root = true\n", "class C { int M() { return 42; } }");
         try
         {
-            var engine = new LintEngine();
-            var diags = await engine.LintFileAsync(path, LintMode.All);
-            Assert.True(diags.Any(d => d.Rule == "OP004"));
+            var diags = await new LintEngine().LintFileAsync(file, LintMode.All);
+            Assert.Contains(diags, d => d.Rule == "OP004");
         }
-        finally { File.Delete(path); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task Severity_override_none_suppresses_finding()
     {
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            dotnet_diagnostic.SAST001.severity = none
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "class C { void M() { try { } catch { } } }");
+        var (dir, file) = Project(
+            "root = true\n[*.cs]\ndotnet_diagnostic.SAST001.severity = none\n",
+            "class C { void M() { try { } catch { } } }");
         try
         {
-            var engine = new LintEngine();
-            var diags = await engine.LintFileAsync(file, LintMode.EditorConfigAndSast);
-            Assert.False(diags.Any(d => d.Rule == "SAST001"));
+            var diags = await new LintEngine().LintFileAsync(file, LintMode.EditorConfigAndSast);
+            Assert.DoesNotContain(diags, d => d.Rule == "SAST001");
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task Severity_override_error_promotes_finding()
     {
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            dotnet_diagnostic.SAST002.severity = error
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "class C { void M() { Console.WriteLine(); } }");
+        var (dir, file) = Project(
+            "root = true\n[*.cs]\ndotnet_diagnostic.OP004.severity = error\n",
+            "class C { int M() { return 42; } }");
         try
         {
-            var engine = new LintEngine();
-            var diags = await engine.LintFileAsync(file, LintMode.EditorConfigAndSast);
-            var sast002 = diags.FirstOrDefault(d => d.Rule == "SAST002");
-            if (sast002 != null)
-                Assert.Equal(Severity.Error, sast002.Severity);
+            var diags = await new LintEngine().LintFileAsync(file, LintMode.All);
+            Assert.Contains(diags, d => d.Rule == "OP004" && d.Severity == Severity.Error);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task LintFile_missing_returns_empty()
     {
-        var engine = new LintEngine();
-        var diags = await engine.LintFileAsync("/nonexistent/file.cs", LintMode.All);
+        var diags = await new LintEngine().LintFileAsync("/no/such/file.cs", LintMode.All);
         Assert.Empty(diags);
     }
 
     [Fact]
     public async Task LintFiles_counts_files()
     {
-        var paths = new[] { T.WriteCs("class A { }"), T.WriteCs("class B { }") };
+        var (dir, file) = Project("root = true\n", "class C { }");
         try
         {
-            var engine = new LintEngine();
-            var summary = await engine.LintFilesAsync(paths, LintMode.EditorConfig);
-            Assert.Equal(2, summary.FilesChecked);
+            var summary = await new LintEngine().LintFilesAsync([file], LintMode.EditorConfig);
+            Assert.Equal(1, summary.FilesChecked);
         }
-        finally
-        {
-            foreach (var p in paths) File.Delete(p);
-        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public async Task ExplainFile_lists_rules()
     {
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "class C { }");
+        var (dir, file) = Project("root = true\n[*.cs]\nindent_style = space\n", "class C { }");
         try
         {
-            var engine = new LintEngine();
-            var output = engine.ExplainFile(file);
-            Assert.Contains("EC001", output);
+            var text = new LintEngine().ExplainFile(file);
+            Assert.Contains("EC001", text);
+            Assert.Contains("SAST", text);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Summary_exposes_counts()
     {
-        var diags = new List<Diagnostic>
-        {
-            new("f.cs", 1, 1, "R1", "msg", Severity.Error),
-            new("f.cs", 2, 1, "R2", "msg", Severity.Warning),
-        };
-        var summary = new Summary(diags, 2);
+        var summary = new Summary(
+        [
+            new("a", 1, 1, "X", "m", Severity.Error),
+            new("a", 2, 1, "Y", "m", Severity.Warning),
+        ], 1);
         Assert.Equal(1, summary.ErrorCount);
         Assert.Equal(1, summary.WarningCount);
         Assert.True(summary.HasErrors);

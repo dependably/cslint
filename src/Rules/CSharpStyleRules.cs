@@ -23,7 +23,7 @@ sealed class NamespaceDeclarationStyleRule : IRule
         var diagnostics = new List<Diagnostic>();
 
         var blockNs = root.DescendantNodes().OfType<NamespaceDeclarationSyntax>().ToList();
-        var fileNs  = root.DescendantNodes().OfType<FileScopedNamespaceDeclarationSyntax>().ToList();
+        var fileNs = root.DescendantNodes().OfType<FileScopedNamespaceDeclarationSyntax>().ToList();
 
         if (setting == "file_scoped" && blockNs.Count > 0)
         {
@@ -69,56 +69,65 @@ sealed class PatternMatchingRule : IRule
         var root = await tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
-        if (StyleHelper.TryGet(config, "csharp_style_pattern_matching_over_is_with_cast_check",
-            out var isVal, out var isSev) && isVal == "true")
-        {
-            foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>())
-            {
-                if (IsIsCastPattern(ifStmt))
-                {
-                    var loc = ifStmt.IfKeyword.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        "Prefer pattern matching over 'is' check + cast (csharp_style_pattern_matching_over_is_with_cast_check = true).",
-                        isSev));
-                }
-            }
-        }
-
-        if (StyleHelper.TryGet(config, "csharp_style_pattern_matching_over_as_with_null_check",
-            out var asVal, out var asSev) && asVal == "true")
-        {
-            foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
-            {
-                if (IsAsNullCheckPattern(local, root))
-                {
-                    var loc = local.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, 1, Id,
-                        "Prefer pattern matching over 'as' + null check (csharp_style_pattern_matching_over_as_with_null_check = true).",
-                        asSev));
-                }
-            }
-        }
-
-        if (StyleHelper.TryGet(config, "csharp_style_prefer_not_pattern",
-            out var notVal, out var notSev) && notVal == "true")
-        {
-            foreach (var prefix in root.DescendantNodes().OfType<PrefixUnaryExpressionSyntax>())
-            {
-                if (prefix.IsKind(SyntaxKind.LogicalNotExpression) &&
-                    prefix.Operand is IsPatternExpressionSyntax)
-                {
-                    var loc = prefix.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        "Prefer 'is not' pattern over '!is' expression (csharp_style_prefer_not_pattern = true).",
-                        notSev));
-                }
-            }
-        }
+        CheckIsWithCast(filePath, root, config, diagnostics);
+        CheckAsWithNullCheck(filePath, root, config, diagnostics);
+        CheckNotPattern(filePath, root, config, diagnostics);
 
         return diagnostics;
+    }
+
+    void CheckIsWithCast(
+        string filePath, SyntaxNode root, FileConfig config, List<Diagnostic> diagnostics)
+    {
+        if (!StyleHelper.TryGet(config, "csharp_style_pattern_matching_over_is_with_cast_check",
+            out var val, out var sev) || val != "true")
+            return;
+
+        foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>().Where(IsIsCastPattern))
+        {
+            var loc = ifStmt.IfKeyword.GetLocation().GetLineSpan();
+            diagnostics.Add(StyleHelper.Make(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                "Prefer pattern matching over 'is' check + cast (csharp_style_pattern_matching_over_is_with_cast_check = true).",
+                sev));
+        }
+    }
+
+    void CheckAsWithNullCheck(
+        string filePath, SyntaxNode root, FileConfig config, List<Diagnostic> diagnostics)
+    {
+        if (!StyleHelper.TryGet(config, "csharp_style_pattern_matching_over_as_with_null_check",
+            out var val, out var sev) || val != "true")
+            return;
+
+        foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>()
+                     .Where(IsAsNullCheckPattern))
+        {
+            var loc = local.GetLocation().GetLineSpan();
+            diagnostics.Add(StyleHelper.Make(filePath,
+                loc.StartLinePosition.Line + 1, 1, Id,
+                "Prefer pattern matching over 'as' + null check (csharp_style_pattern_matching_over_as_with_null_check = true).",
+                sev));
+        }
+    }
+
+    void CheckNotPattern(
+        string filePath, SyntaxNode root, FileConfig config, List<Diagnostic> diagnostics)
+    {
+        if (!StyleHelper.TryGet(config, "csharp_style_prefer_not_pattern",
+            out var val, out var sev) || val != "true")
+            return;
+
+        foreach (var prefix in root.DescendantNodes().OfType<PrefixUnaryExpressionSyntax>()
+                     .Where(p => p.IsKind(SyntaxKind.LogicalNotExpression)
+                                 && p.Operand is IsPatternExpressionSyntax))
+        {
+            var loc = prefix.GetLocation().GetLineSpan();
+            diagnostics.Add(StyleHelper.Make(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                "Prefer 'is not' pattern over '!is' expression (csharp_style_prefer_not_pattern = true).",
+                sev));
+        }
     }
 
     static bool IsIsCastPattern(IfStatementSyntax ifStmt)
@@ -142,7 +151,7 @@ sealed class PatternMatchingRule : IRule
                       id2.Identifier.Text == varName);
     }
 
-    static bool IsAsNullCheckPattern(LocalDeclarationStatementSyntax local, SyntaxNode root)
+    static bool IsAsNullCheckPattern(LocalDeclarationStatementSyntax local)
     {
         if (local.Declaration.Variables.Count != 1) return false;
         var variable = local.Declaration.Variables[0];
@@ -151,11 +160,11 @@ sealed class PatternMatchingRule : IRule
             return false;
 
         var localName = variable.Identifier.Text;
-        var parent    = local.Parent;
+        var parent = local.Parent;
         if (parent == null) return false;
 
         var siblings = parent.ChildNodes().ToList();
-        var idx      = siblings.IndexOf(local);
+        var idx = siblings.IndexOf(local);
 
         const int maxLookaheadStatements = 3;
         return siblings.Skip(idx + 1).Take(maxLookaheadStatements)
@@ -186,16 +195,13 @@ sealed class ThrowExpressionRule : IRule
         var root = await tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
-        foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>())
+        foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>().Where(IsNullThrowGuard))
         {
-            if (IsNullThrowGuard(ifStmt))
-            {
-                var loc = ifStmt.IfKeyword.GetLocation().GetLineSpan();
-                diagnostics.Add(StyleHelper.Make(filePath,
-                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                    "Prefer throw expression over null-check-then-throw (csharp_style_throw_expression = true).",
-                    severity));
-            }
+            var loc = ifStmt.IfKeyword.GetLocation().GetLineSpan();
+            diagnostics.Add(StyleHelper.Make(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                "Prefer throw expression over null-check-then-throw (csharp_style_throw_expression = true).",
+                severity));
         }
 
         return diagnostics;
@@ -302,32 +308,32 @@ sealed class UnusedValueRule : IRule
             out var assignVal, out var assignSev) && assignVal == "discard_variable")
         {
             foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
-            {
                 foreach (var variable in local.Declaration.Variables)
-                {
-                    var name = variable.Identifier.Text;
-                    if (name.StartsWith('_') || variable.Initializer == null) continue;
-
-                    var parent = local.Parent;
-                    if (parent == null) continue;
-
-                    bool usedAfter = parent.DescendantNodes()
-                        .OfType<IdentifierNameSyntax>()
-                        .Any(id => id.Identifier.Text == name &&
-                                   id.SpanStart > local.SpanStart);
-
-                    if (!usedAfter)
-                    {
-                        var loc = variable.Identifier.GetLocation().GetLineSpan();
-                        diagnostics.Add(StyleHelper.Make(filePath,
-                            loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                            $"Unused variable '{name}'. Prefer discard '_' (csharp_style_unused_value_assignment_preference = discard_variable).",
-                            assignSev));
-                    }
-                }
-            }
+                    CheckUnusedLocal(filePath, local, variable, assignSev, diagnostics);
         }
 
         return diagnostics;
+    }
+
+    void CheckUnusedLocal(
+        string filePath, LocalDeclarationStatementSyntax local,
+        VariableDeclaratorSyntax variable, Severity severity, List<Diagnostic> diagnostics)
+    {
+        var name = variable.Identifier.Text;
+        if (name.StartsWith('_') || variable.Initializer == null) return;
+
+        var parent = local.Parent;
+        if (parent == null) return;
+
+        bool usedAfter = parent.DescendantNodes()
+            .OfType<IdentifierNameSyntax>()
+            .Any(id => id.Identifier.Text == name && id.SpanStart > local.SpanStart);
+        if (usedAfter) return;
+
+        var loc = variable.Identifier.GetLocation().GetLineSpan();
+        diagnostics.Add(StyleHelper.Make(filePath,
+            loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+            $"Unused variable '{name}'. Prefer discard '_' (csharp_style_unused_value_assignment_preference = discard_variable).",
+            severity));
     }
 }

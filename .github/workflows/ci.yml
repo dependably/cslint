@@ -6,7 +6,7 @@
 #
 # Jobs:
 #   secret-scan   TruffleHog verified-secret scan (same pinned digest as the suite)
-#   format        `dotnet format --verify-no-changes` (advisory: continue-on-error)
+#   format        `dotnet format --verify-no-changes` (enforced)
 #   build-test    restore + build + integration tests (tests/RunTests.sh)
 #   release       (tags v* only) pack the .nupkg, emit SLSA build provenance
 #                 (keyless OIDC/sigstore), then publish it — SLSA Build L2.
@@ -58,10 +58,9 @@ jobs:
             run_th git file:///repo --since-commit "$BASE" --only-verified --fail
           fi
 
-  # Advisory until cslint's own tree is `dotnet format` clean.
+  # Enforced: cslint's source is `dotnet format` clean and must stay that way.
   format:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -78,6 +77,8 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet restore cslint.csproj --locked-mode
       - run: dotnet build cslint.csproj -c Release --no-restore
+      # Unit tests (xUnit) exercise the internal rule/engine surface directly.
+      - run: dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
       # Integration tests run the packed tool against the fixtures.
       - run: dotnet pack cslint.csproj -c Release --no-restore -o artifacts
       - run: dotnet tool install --global --add-source artifacts Dependably.CsLint

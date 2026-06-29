@@ -86,11 +86,11 @@ sealed class CsLintConfig
 
             return new CsLintConfig
             {
-                Strict           = ReadBool(tool, common, "strict", false),
+                Strict = ReadBool(tool, common, "strict", false),
                 ScanMagicNumbers = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "magicNumbers", true),
-                ScanBoolFlags    = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "boolFlags", true),
+                ScanBoolFlags = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "boolFlags", true),
                 ScanCancellation = ReadBool(GetObject(tool, "scan"), GetObject(common, "scan"), "cancellation", true),
-                Exclude          = ReadStringArray(common, tool, "exclude"),
+                Exclude = ReadStringArray(common, tool, "exclude"),
             };
         }
         catch (JsonException ex)
@@ -106,10 +106,12 @@ sealed class CsLintConfig
             ? child : null;
 
     /// <summary>The bool <paramref name="key"/> from the tool section, else common, else default.</summary>
-    static bool ReadBool(JsonElement? tool, JsonElement? common, string key, bool def) =>
-        TryBool(tool, key, out var t) ? t
-        : TryBool(common, key, out var c) ? c
-        : def;
+    static bool ReadBool(JsonElement? tool, JsonElement? common, string key, bool def)
+    {
+        if (TryBool(tool, key, out var t)) return t;
+        if (TryBool(common, key, out var c)) return c;
+        return def;
+    }
 
     static bool TryBool(JsonElement? section, string key, out bool value)
     {
@@ -124,7 +126,7 @@ sealed class CsLintConfig
     }
 
     /// <summary>The union of the string array <paramref name="key"/> from both sections, de-duplicated.</summary>
-    static IReadOnlyList<string> ReadStringArray(JsonElement? first, JsonElement? second, string key)
+    static List<string> ReadStringArray(JsonElement? first, JsonElement? second, string key)
     {
         var values = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);

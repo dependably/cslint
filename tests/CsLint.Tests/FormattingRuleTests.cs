@@ -1,3 +1,4 @@
+using CsLint;
 using CsLint.Rules;
 using Xunit;
 
@@ -5,95 +6,75 @@ namespace CsLint.Tests;
 
 public class FormattingRuleTests
 {
+    static FileConfig FmtCfg()
+    {
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["csharp_space_after_comma"] = "true",
+            ["csharp_new_line_before_open_brace"] = "all",
+        };
+        var ec = "[*.cs]\ncsharp_space_after_comma = true\n";
+        return new FileConfig(props, new List<(string, string)> { (".editorconfig", ec) });
+    }
+
     [Fact]
     public void Does_not_apply_without_config_files()
     {
-        // FormattingRule requires at least one .editorconfig file loaded.
-        var cfg = T.Cfg(); // empty config, no files
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["csharp_space_after_comma"] = "true",
+        };
+        var cfg = new FileConfig(props, new List<(string, string)>());
         Assert.False(new FormattingRule().AppliesTo(cfg));
     }
 
     [Fact]
     public void Applies_with_config_files_and_formatting_key()
     {
-        // Construct a FileConfig that has ConfigFiles and a formatting key.
-        var cfg = new CsLint.FileConfig(
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["csharp_new_line_before_open_brace"] = "all"
-            },
-            new List<(string, string)> { ("/any/.editorconfig", "") });
-        Assert.True(new FormattingRule().AppliesTo(cfg));
+        Assert.True(new FormattingRule().AppliesTo(FmtCfg()));
     }
 
     [Fact]
     public async Task Analyze_returns_fmt_diagnostics_only()
     {
-        // A well-formatted file against a default config produces no FMT diagnostics.
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space
-            indent_size = 4
-            csharp_new_line_before_open_brace = all
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "class C\n{\n    void M()\n    {\n    }\n}\n");
+        // The adhoc-workspace Roslyn formatter is host-dependent (no-op without the full
+        // formatting service), so we assert the contract — any diagnostic is an FMT one —
+        // rather than a specific reformatting outcome.
+        var path = T.WriteCs("class C{void M(int a,int b){int x=1;}}");
         try
         {
-            var loader = new CsLint.EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            var diags = await new FormattingRule().AnalyzeAsync(file, config);
-            // Just checking it doesn't throw; may or may not produce FMT findings.
+            var diags = await new FormattingRule().AnalyzeAsync(path, FmtCfg());
+            Assert.NotNull(diags);
             Assert.All(diags, d => Assert.Equal("FMT", d.Rule));
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { File.Delete(path); }
     }
 
     [Fact]
     public async Task Clean_source_produces_no_diff()
     {
-        // An already-formatted file should produce no FMT diagnostics.
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space
-            indent_size = 4
-            """);
-        var file = Path.Combine(dir, "Clean.cs");
-        File.WriteAllText(file, "class C { }\n");
+        var wellFormatted = "class C\n{\n    void M()\n    {\n    }\n}\n";
+        var path = T.WriteCs(wellFormatted);
         try
         {
-            var loader = new CsLint.EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            var diags = await new FormattingRule().AnalyzeAsync(file, config);
+            var diags = await new FormattingRule().AnalyzeAsync(path, FmtCfg());
             Assert.Empty(diags);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { File.Delete(path); }
     }
 
     [Fact]
     public async Task Fix_runs_without_error()
     {
-        var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space
-            indent_size = 4
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "class C { }\n");
+        const string src = "class C{void M(int a,int b){int x=1;}}";
+        var path = T.WriteCs(src);
         try
         {
-            var loader = new CsLint.EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            // FixAsync may return false (nothing changed) but should not throw.
-            var fixed_ = await new FormattingRule().FixAsync(file, config);
-            Assert.IsType<bool>(fixed_);
+            var changed = await new FormattingRule().FixAsync(path, FmtCfg());
+            // When the formatter is a no-op the file is unchanged and FixAsync returns false;
+            // when it reformats, the content differs. Either way the call must succeed.
+            Assert.Equal(changed, File.ReadAllText(path) != src);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { File.Delete(path); }
     }
 }

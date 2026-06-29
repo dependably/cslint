@@ -23,69 +23,72 @@ sealed class ExpressionBodyRule : IRule
     public bool AppliesTo(FileConfig config) =>
         Keys.Any(config.Properties.ContainsKey);
 
+    // Per-file analysis context, threaded through CheckNode/Check so the member-check
+    // helper stays well under the parameter-count limit (S107).
+    sealed record Context(string FilePath, FileConfig Config, List<Diagnostic> Diagnostics);
+
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
         var root = await tree.GetRootAsync();
-        var diagnostics = new List<Diagnostic>();
+        var ctx = new Context(filePath, config, new List<Diagnostic>());
 
         foreach (var node in root.DescendantNodes())
-            CheckNode(filePath, node, config, diagnostics);
+            CheckNode(ctx, node);
 
-        return diagnostics;
+        return ctx.Diagnostics;
     }
 
-    static void CheckNode(string filePath, SyntaxNode node, FileConfig config, List<Diagnostic> diagnostics)
+    static void CheckNode(Context ctx, SyntaxNode node)
     {
         switch (node)
         {
             case MethodDeclarationSyntax m:
-                Check(filePath, m.Body, m.ExpressionBody, m.Identifier.GetLocation(),
-                    "csharp_style_expression_bodied_methods", "method", config, diagnostics);
+                Check(ctx, m.Body, m.ExpressionBody, m.Identifier.GetLocation(),
+                    "csharp_style_expression_bodied_methods", "method");
                 break;
 
             case ConstructorDeclarationSyntax c:
-                Check(filePath, c.Body, c.ExpressionBody, c.Identifier.GetLocation(),
-                    "csharp_style_expression_bodied_constructors", "constructor", config, diagnostics);
+                Check(ctx, c.Body, c.ExpressionBody, c.Identifier.GetLocation(),
+                    "csharp_style_expression_bodied_constructors", "constructor");
                 break;
 
             case OperatorDeclarationSyntax op:
-                Check(filePath, op.Body, op.ExpressionBody, op.OperatorToken.GetLocation(),
-                    "csharp_style_expression_bodied_operators", "operator", config, diagnostics);
+                Check(ctx, op.Body, op.ExpressionBody, op.OperatorToken.GetLocation(),
+                    "csharp_style_expression_bodied_operators", "operator");
                 break;
 
             case PropertyDeclarationSyntax p when p.AccessorList == null || IsSingleGetterProperty(p):
-                Check(filePath, GetPropertyBlock(p), p.ExpressionBody, p.Identifier.GetLocation(),
-                    "csharp_style_expression_bodied_properties", "property", config, diagnostics);
+                Check(ctx, GetPropertyBlock(p), p.ExpressionBody, p.Identifier.GetLocation(),
+                    "csharp_style_expression_bodied_properties", "property");
                 break;
 
             case IndexerDeclarationSyntax idx:
-                Check(filePath, null, idx.ExpressionBody, idx.ThisKeyword.GetLocation(),
-                    "csharp_style_expression_bodied_indexers", "indexer", config, diagnostics);
+                Check(ctx, null, idx.ExpressionBody, idx.ThisKeyword.GetLocation(),
+                    "csharp_style_expression_bodied_indexers", "indexer");
                 break;
 
             case AccessorDeclarationSyntax acc:
-                Check(filePath, acc.Body, acc.ExpressionBody, acc.Keyword.GetLocation(),
-                    "csharp_style_expression_bodied_accessors", "accessor", config, diagnostics);
+                Check(ctx, acc.Body, acc.ExpressionBody, acc.Keyword.GetLocation(),
+                    "csharp_style_expression_bodied_accessors", "accessor");
                 break;
 
             case LocalFunctionStatementSyntax lf:
-                Check(filePath, lf.Body, lf.ExpressionBody, lf.Identifier.GetLocation(),
-                    "csharp_style_expression_bodied_local_functions", "local function", config, diagnostics);
+                Check(ctx, lf.Body, lf.ExpressionBody, lf.Identifier.GetLocation(),
+                    "csharp_style_expression_bodied_local_functions", "local function");
                 break;
         }
     }
 
     static void Check(
-        string filePath,
+        Context ctx,
         BlockSyntax? blockBody,
         ArrowExpressionClauseSyntax? expressionBody,
         Location identifierLoc,
-        string key, string memberKind,
-        FileConfig config, List<Diagnostic> diagnostics)
+        string key, string memberKind)
     {
-        if (!StyleHelper.TryGet(config, key, out var setting, out var severity))
+        if (!StyleHelper.TryGet(ctx.Config, key, out var setting, out var severity))
             return;
 
         var loc = identifierLoc.GetLineSpan();
@@ -93,18 +96,18 @@ sealed class ExpressionBodyRule : IRule
 
         if (setting == "true" && blockBody != null && HasSingleReturnOrExpression(blockBody))
         {
-            diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS011",
+            ctx.Diagnostics.Add(StyleHelper.Make(ctx.FilePath, line, col, "CS011",
                 $"Prefer expression body for {memberKind} ({key} = true).", severity));
         }
         else if (setting == "false" && expressionBody != null)
         {
-            diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS011",
+            ctx.Diagnostics.Add(StyleHelper.Make(ctx.FilePath, line, col, "CS011",
                 $"Prefer block body for {memberKind} ({key} = false).", severity));
         }
         else if (setting == "when_on_single_line" && blockBody != null &&
                  HasSingleReturnOrExpression(blockBody) && IsSingleLine(blockBody))
         {
-            diagnostics.Add(StyleHelper.Make(filePath, line, col, "CS011",
+            ctx.Diagnostics.Add(StyleHelper.Make(ctx.FilePath, line, col, "CS011",
                 $"Prefer expression body for single-line {memberKind} ({key} = when_on_single_line).", severity));
         }
     }
@@ -122,8 +125,10 @@ sealed class ExpressionBodyRule : IRule
     static bool IsSingleLine(BlockSyntax block)
     {
         var span = block.GetLocation().GetLineSpan();
+        // A near-single-line block: one statement spanning at most this many lines.
+        const int maxSingleLineSpan = 2;
         return span.StartLinePosition.Line == span.EndLinePosition.Line ||
-               block.Statements.Count <= 1 && span.EndLinePosition.Line - span.StartLinePosition.Line <= 2;
+               block.Statements.Count <= 1 && span.EndLinePosition.Line - span.StartLinePosition.Line <= maxSingleLineSpan;
     }
 
     static bool IsSingleGetterProperty(PropertyDeclarationSyntax p) =>

@@ -9,7 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 dotnet build
 dotnet build -c Release
 
-# Test (requires cslint installed globally first)
+# Unit tests (xUnit; no global install needed) + coverage
+dotnet test tests/CsLint.Tests/CsLint.Tests.csproj
+dotnet test tests/CsLint.Tests/CsLint.Tests.csproj --collect:"XPlat Code Coverage"
+
+# Integration tests (requires cslint installed globally first)
 dotnet tool install --global Dependably.CsLint
 bash tests/RunTests.sh
 
@@ -67,9 +71,12 @@ All                      → + OP004-006     (--scan, implies --sast)
 
 ### Testing
 
-Tests are bash-driven integration tests. `tests/RunTests.sh` invokes `cslint` against fixture files and checks that expected rule IDs appear (or are absent) in stdout. Each fixture in `tests/fixtures/{tier}/` is a `.cs` file containing deliberate violations.
+Two complementary layers:
 
-To add a new rule: implement `IRule`, register it in `LintEngine`, add a fixture file under `tests/fixtures/`, add `check()` calls in `RunTests.sh`.
+- **Unit tests** (`tests/CsLint.Tests/`, xUnit) exercise the internal rule/engine/config/CLI surface directly — no global install needed. The main project exposes its internals to the test assembly via `InternalsVisibleTo("CsLint.Tests")`. `TestSupport.cs` (`T`) has helpers: `T.Run(rule, code, cfg)` runs a rule against an in-memory snippet, `T.Cfg(...)` builds a `FileConfig` from editorconfig-style pairs, `T.CaptureOut(...)` captures `Console.Out`. The suite is run **serially** (`AssemblyInfo.cs` disables xUnit parallelization) because Reporter/CLI tests redirect the process-global `Console.Out`. Run with `--collect:"XPlat Code Coverage"` for a Cobertura report.
+- **Integration tests** (`tests/RunTests.sh`) invoke the installed `cslint` against fixture files and check that expected rule IDs appear (or are absent) in stdout. Each fixture in `tests/fixtures/{tier}/` is a `.cs` file containing deliberate violations.
+
+To add a new rule: implement `IRule`, register it in `LintEngine`, add a unit test under `tests/CsLint.Tests/`, add a fixture file under `tests/fixtures/`, and add `check()` calls in `RunTests.sh`.
 
 ### Conventions
 

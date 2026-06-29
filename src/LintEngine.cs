@@ -80,22 +80,29 @@ class LintEngine
                 if (wasFixed) continue;
             }
 
-            try
-            {
-                var results = await rule.AnalyzeAsync(filePath, config);
-                foreach (var d in results)
-                {
-                    var adjusted = ApplySeverityOverride(d, config);
-                    if (adjusted is not null) diagnostics.Add(adjusted);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(filePath)}: {ex.Message}");
-            }
+            await RunRuleAsync(rule, filePath, config, diagnostics);
         }
 
         return diagnostics;
+    }
+
+    // Run one rule and fold its (severity-adjusted) findings into the list. Kept separate so the
+    // try / foreach / if nesting stays shallow.
+    static async Task RunRuleAsync(IRule rule, string filePath, FileConfig config, List<Diagnostic> diagnostics)
+    {
+        try
+        {
+            var results = await rule.AnalyzeAsync(filePath, config);
+            foreach (var d in results)
+            {
+                var adjusted = ApplySeverityOverride(d, config);
+                if (adjusted is not null) diagnostics.Add(adjusted);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(filePath)}: {ex.Message}");
+        }
     }
 
     // Honour `dotnet_diagnostic.<RuleId>.severity` from .editorconfig for ANY cslint rule
@@ -108,14 +115,14 @@ class LintEngine
 
         return sev.Trim().ToLowerInvariant() switch
         {
-            "none" or "silent"                        => null,
-            "error"                                   => d with { Severity = Severity.Error },
+            "none" or "silent" => null,
+            "error" => d with { Severity = Severity.Error },
             "warning" or "suggestion" or "info" or "hint" => d with { Severity = Severity.Warning },
-            _                                         => d,
+            _ => d,
         };
     }
 
-    IEnumerable<IRule> SelectRules(LintMode mode, FileConfig config)
+    List<IRule> SelectRules(LintMode mode, FileConfig config)
     {
         var rules = new List<IRule>();
 
@@ -209,7 +216,7 @@ class LintEngine
 
 record Summary(IReadOnlyList<Diagnostic> Diagnostics, int FilesChecked)
 {
-    public int ErrorCount   => Diagnostics.Count(d => d.Severity == Severity.Error);
+    public int ErrorCount => Diagnostics.Count(d => d.Severity == Severity.Error);
     public int WarningCount => Diagnostics.Count(d => d.Severity == Severity.Warning);
-    public bool HasErrors   => ErrorCount > 0;
+    public bool HasErrors => ErrorCount > 0;
 }

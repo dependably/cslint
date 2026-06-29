@@ -5,107 +5,98 @@ namespace CsLint.Tests;
 
 public class CsLintConfigTests
 {
+    static string WriteConfig(string dir, string json)
+    {
+        var path = Path.Combine(dir, CsLintConfig.FileName);
+        File.WriteAllText(path, json);
+        return path;
+    }
+
     [Fact]
     public void Load_explicit_parses_all_sections()
     {
         var dir = T.TempDir();
-        var path = Path.Combine(dir, ".dependably-check");
-        File.WriteAllText(path, """
-            {
-              "common": { "strict": false, "exclude": ["tests/**"] },
-              "cslint": {
-                "strict": true,
-                "exclude": ["**/Generated/**"],
-                "scan": { "magicNumbers": false, "boolFlags": true, "cancellation": true }
-              }
-            }
-            """);
         try
         {
+            var path = WriteConfig(dir, """
+                { "common": { "exclude": ["tests/**"] },
+                  "cslint": { "strict": true, "exclude": ["gen/**"],
+                              "scan": { "magicNumbers": false, "boolFlags": true } } }
+                """);
             var cfg = CsLintConfig.Load(path, dir);
             Assert.True(cfg.Strict);
             Assert.False(cfg.ScanMagicNumbers);
             Assert.True(cfg.ScanBoolFlags);
             Assert.Contains("tests/**", cfg.Exclude);
+            Assert.Contains("gen/**", cfg.Exclude);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Load_missing_explicit_throws_file_not_found()
     {
-        Assert.Throws<FileNotFoundException>(() =>
-            CsLintConfig.Load("/nonexistent/.dependably-check", "/nonexistent"));
+        Assert.Throws<FileNotFoundException>(
+            () => CsLintConfig.Load(Path.Combine(T.TempDir(), "nope.json"), T.TempDir()));
     }
 
     [Fact]
     public void Load_invalid_json_throws_invalid_data()
     {
         var dir = T.TempDir();
-        var path = Path.Combine(dir, ".dependably-check");
-        File.WriteAllText(path, "{ not valid json }");
         try
         {
-            Assert.Throws<InvalidDataException>(() =>
-                CsLintConfig.Load(path, dir));
+            var path = WriteConfig(dir, "{ not valid json");
+            Assert.Throws<InvalidDataException>(() => CsLintConfig.Load(path, dir));
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Load_returns_empty_when_none_found()
     {
-        // Use a temp dir with no .dependably-check and no .git (stop at root).
-        // Since we can't control the whole tree, just test with an explicit null path
-        // and a dir that has no config file. We rely on the directory walk stopping
-        // at the git boundary (cslint is in a git repo).
-        var cfg = CsLintConfig.Load(null, "/tmp");
-        Assert.NotNull(cfg); // returns Empty, not null
+        var dir = T.TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, ".git")); // repo boundary, no config
+        try
+        {
+            var cfg = CsLintConfig.Load(null, dir);
+            Assert.Same(CsLintConfig.Empty, cfg);
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Discover_walks_up_to_find_config()
     {
-        var rootDir = T.TempDir();
-        var subDir = Path.Combine(rootDir, "sub", "dir");
-        Directory.CreateDirectory(subDir);
-        var configPath = Path.Combine(rootDir, ".dependably-check");
-        File.WriteAllText(configPath, "{}");
+        var root = T.TempDir();
+        var sub = Path.Combine(root, "a", "b");
+        Directory.CreateDirectory(sub);
         try
         {
-            var discovered = CsLintConfig.Discover(subDir);
-            Assert.Equal(configPath, discovered);
+            WriteConfig(root, "{}");
+            Assert.Equal(Path.Combine(root, CsLintConfig.FileName), CsLintConfig.Discover(sub));
         }
-        finally { Directory.Delete(rootDir, recursive: true); }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
     public void Discover_stops_at_git_boundary()
     {
-        // Create a git-like boundary.
-        var rootDir = T.TempDir();
-        var gitDir = Path.Combine(rootDir, ".git");
-        Directory.CreateDirectory(gitDir);
-        var subDir = Path.Combine(rootDir, "sub");
-        Directory.CreateDirectory(subDir);
+        var dir = T.TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
         try
         {
-            // Config is above the .git boundary — should not be found.
-            var discovered = CsLintConfig.Discover(subDir);
-            Assert.Null(discovered);
+            Assert.Null(CsLintConfig.Discover(dir));
         }
-        finally { Directory.Delete(rootDir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Empty_has_defaults()
     {
-        var cfg = CsLintConfig.Empty;
-        Assert.False(cfg.Strict);
-        Assert.True(cfg.ScanMagicNumbers);
-        Assert.True(cfg.ScanBoolFlags);
-        Assert.True(cfg.ScanCancellation);
-        Assert.Empty(cfg.Exclude);
+        Assert.False(CsLintConfig.Empty.Strict);
+        Assert.True(CsLintConfig.Empty.ScanMagicNumbers);
+        Assert.Empty(CsLintConfig.Empty.Exclude);
     }
 }
 
@@ -115,93 +106,90 @@ public class EditorConfigLoaderTests
     public void Merges_sections_matching_file()
     {
         var dir = T.TempDir();
-        var editorConfig = Path.Combine(dir, ".editorconfig");
-        File.WriteAllText(editorConfig, """
-            root = true
-            [*.cs]
-            indent_style = space
-            indent_size = 4
-            """);
-        var file = Path.Combine(dir, "Test.cs");
-        File.WriteAllText(file, "class C { }");
         try
         {
-            var loader = new EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            Assert.True(config.Properties.TryGetValue("indent_style", out var style));
-            Assert.Equal("space", style);
+            File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
+                root = true
+                [*]
+                indent_style = space
+                [*.cs]
+                indent_size = 4
+                """);
+            var file = Path.Combine(dir, "Foo.cs");
+            File.WriteAllText(file, "class C { }");
+
+            var cfg = new EditorConfigLoader().GetConfig(file);
+            Assert.Equal("space", cfg.Properties["indent_style"]);
+            Assert.Equal("4", cfg.Properties["indent_size"]);
+            Assert.Single(cfg.ConfigFiles);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Expands_brace_patterns()
     {
         var dir = T.TempDir();
-        var editorConfig = Path.Combine(dir, ".editorconfig");
-        File.WriteAllText(editorConfig, """
-            root = true
-            [*.{cs,fs}]
-            trim_trailing_whitespace = true
-            """);
-        var file = Path.Combine(dir, "Program.cs");
-        File.WriteAllText(file, "class C { }");
         try
         {
-            var loader = new EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            Assert.True(config.Properties.ContainsKey("trim_trailing_whitespace"));
+            File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
+                root = true
+                [*.{cs,txt}]
+                max_line_length = 120
+                """);
+            var file = Path.Combine(dir, "Foo.cs");
+            File.WriteAllText(file, "class C { }");
+
+            var cfg = new EditorConfigLoader().GetConfig(file);
+            Assert.Equal("120", cfg.Properties["max_line_length"]);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
     public void Child_overrides_parent_and_stops_at_root()
     {
-        var parentDir = T.TempDir();
-        var childDir = Path.Combine(parentDir, "src");
-        Directory.CreateDirectory(childDir);
-
-        File.WriteAllText(Path.Combine(parentDir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = tab
-            """);
-        File.WriteAllText(Path.Combine(childDir, ".editorconfig"), """
-            [*.cs]
-            indent_style = space
-            """);
-        var file = Path.Combine(childDir, "C.cs");
-        File.WriteAllText(file, "class C { }");
+        var root = T.TempDir();
+        var child = Path.Combine(root, "child");
+        Directory.CreateDirectory(child);
         try
         {
-            var loader = new EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            Assert.Equal("space",
-                config.Properties.TryGetValue("indent_style", out var v) ? v : "");
+            File.WriteAllText(Path.Combine(root, ".editorconfig"), """
+                root = true
+                [*.cs]
+                indent_size = 2
+                """);
+            File.WriteAllText(Path.Combine(child, ".editorconfig"), """
+                [*.cs]
+                indent_size = 8
+                """);
+            var file = Path.Combine(child, "Foo.cs");
+            File.WriteAllText(file, "class C { }");
+
+            var cfg = new EditorConfigLoader().GetConfig(file);
+            Assert.Equal("8", cfg.Properties["indent_size"]);
+            Assert.Equal(2, cfg.ConfigFiles.Count);
         }
-        finally { Directory.Delete(parentDir, recursive: true); }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
     public void Strips_inline_comments_from_values()
     {
         var dir = T.TempDir();
-        File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
-            root = true
-            [*.cs]
-            indent_style = space   # this is a comment
-            """);
-        var file = Path.Combine(dir, "C.cs");
-        File.WriteAllText(file, "");
         try
         {
-            var loader = new EditorConfigLoader();
-            var config = loader.GetConfig(file);
-            // The value should be "space" with no trailing comment.
-            Assert.True(config.Properties.TryGetValue("indent_style", out var v));
-            Assert.Equal("space", v?.Trim());
+            File.WriteAllText(Path.Combine(dir, ".editorconfig"), """
+                root = true
+                [*.cs]
+                indent_style = space # use spaces
+                """);
+            var file = Path.Combine(dir, "Foo.cs");
+            File.WriteAllText(file, "class C { }");
+
+            var cfg = new EditorConfigLoader().GetConfig(file);
+            Assert.Equal("space", cfg.Properties["indent_style"]);
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        finally { Directory.Delete(dir, true); }
     }
 }

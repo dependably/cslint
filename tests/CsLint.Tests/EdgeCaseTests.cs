@@ -1,160 +1,125 @@
-using CsLint;
 using CsLint.Rules;
 using CsLint.Rules.Sast;
 using Xunit;
 
 namespace CsLint.Tests;
 
-/// <summary>Edge cases and boundary conditions across rule tiers.</summary>
 public class EdgeCaseTests
 {
-    // ── SAST edge cases ───────────────────────────────────────────────────────
-
     [Fact]
     public async Task FireAndForget_awaited_call_is_clean()
     {
-        var code = """
-            using System.Threading.Tasks;
-            class C {
-                async Task M() { await DoAsync(); }
-                Task DoAsync() => Task.CompletedTask;
-            }
-            """;
-        var diags = await T.Run(new FireAndForgetRule(), code);
+        var diags = await T.Run(new FireAndForgetRule(),
+            "using System.Threading.Tasks; class C { async Task M() { await DoAsync(); } " +
+            "Task DoAsync() => Task.CompletedTask; }");
         Assert.False(diags.Has("SAST005"));
     }
 
     [Fact]
     public async Task DynamicUsage_parameter_is_flagged()
     {
-        var code = "class C { void M(dynamic d) { } }";
-        var diags = await T.Run(new DynamicUsageRule(), code);
+        var diags = await T.Run(new DynamicUsageRule(), "class C { void M(dynamic d) { } }");
         Assert.True(diags.Has("SAST008"));
     }
 
     [Fact]
     public async Task HardcodedSecret_masked_value_is_clean()
     {
-        // A value that is all stars (masked credential placeholder) is not flagged.
-        var code = "class C { string password = \"*****\"; }";
-        var diags = await T.Run(new HardcodedSecretRule(), code);
+        var diags = await T.Run(new HardcodedSecretRule(),
+            "class C { void M() { string password = \"****\"; } }");
         Assert.False(diags.Has("SAST004"));
     }
 
     [Fact]
     public async Task ThreadSleep_other_thread_member_is_clean()
     {
-        // Thread.SpinWait is not Thread.Sleep.
-        var code = """
-            using System.Threading;
-            using System.Threading.Tasks;
-            class C {
-                async Task M() { Thread.SpinWait(100); }
-            }
-            """;
-        var diags = await T.Run(new ThreadSleepInAsyncRule(), code);
+        var diags = await T.Run(new ThreadSleepInAsyncRule(),
+            "using System.Threading; class C { async System.Threading.Tasks.Task M() " +
+            "{ Thread.Yield(); } }");
         Assert.False(diags.Has("SAST007"));
     }
-
-    // ── Style edge cases ──────────────────────────────────────────────────────
 
     [Fact]
     public async Task ExpressionBody_constructor_accessor_and_local_function()
     {
-        // A method that cannot be converted to expression body (e.g. async void)
-        // should not be flagged for expression body if it has multiple statements.
-        var code = "class C { void M() { int x = 1; int y = 2; } }";
-        var diags = await T.Run(new ExpressionBodyRule(), code,
-            T.Cfg(("csharp_style_expression_bodied_methods", "when_possible:warning")));
-        // Multi-statement method cannot be an expression body — should not flag.
-        Assert.False(diags.Has("CS011"));
+        var ctor = await T.Run(new ExpressionBodyRule(),
+            "class C { int x; C() { x = 1; } }",
+            T.Cfg(("csharp_style_expression_bodied_constructors", "true")));
+        Assert.True(ctor.Has("CS011"));
+
+        var accessor = await T.Run(new ExpressionBodyRule(),
+            "class C { int P { get { return 1; } set { } } }",
+            T.Cfg(("csharp_style_expression_bodied_accessors", "true")));
+        Assert.True(accessor.Has("CS011"));
+
+        var local = await T.Run(new ExpressionBodyRule(),
+            "class C { void M() { int L() { return 1; } L(); } }",
+            T.Cfg(("csharp_style_expression_bodied_local_functions", "true")));
+        Assert.True(local.Has("CS011"));
     }
 
     [Fact]
     public async Task ReadonlyField_protected_candidate_flagged()
     {
-        // The syntactic rule flags private fields with no reassignment outside ctor.
-        // Protected is NOT caught by the syntactic rule (it only flags private).
-        var code = "class C { protected int x; }";
-        var diags = await T.Run(new ReadonlyFieldRule(), code,
-            T.Cfg(("dotnet_style_readonly_field", "true:warning")));
-        // Protected fields: depends on rule; just assert no crash.
-        Assert.NotNull(diags);
+        var diags = await T.Run(new ReadonlyFieldRule(),
+            "class C { protected int x = 5; }",
+            T.Cfg(("dotnet_style_readonly_field", "true")));
+        Assert.True(diags.Has("CS033"));
     }
 
     [Fact]
     public async Task ReadonlyField_assigned_only_in_ctor_flagged()
     {
-        var code = "class C { private int x; public C() { x = 1; } }";
-        var diags = await T.Run(new ReadonlyFieldRule(), code,
-            T.Cfg(("dotnet_style_readonly_field", "true:warning")));
+        var diags = await T.Run(new ReadonlyFieldRule(),
+            "class C { private int x; public C() { x = 1; } }",
+            T.Cfg(("dotnet_style_readonly_field", "true")));
         Assert.True(diags.Has("CS033"));
     }
 
     [Fact]
     public async Task ThrowExpression_with_else_is_clean()
     {
-        // if/else where else has real logic should not flag as throw expression candidate.
-        var code = """
-            class C {
-                void M(string s) {
-                    if (s == null) { throw new System.ArgumentNullException(); }
-                    else { System.Console.WriteLine(s); }
-                }
-            }
-            """;
-        var diags = await T.Run(new ThrowExpressionRule(), code,
-            T.Cfg(("csharp_style_throw_expression", "true:warning")));
-        // Should not flag when else branch has non-trivial code.
-        Assert.NotNull(diags);
+        var diags = await T.Run(new ThrowExpressionRule(),
+            "class C { void M(object o) { if (o == null) throw new System.Exception(); else { } } }",
+            T.Cfg(("csharp_style_throw_expression", "true")));
+        Assert.False(diags.Has("CS022"));
     }
 
     [Fact]
     public async Task Accessibility_omit_if_default_is_clean()
     {
-        // When "omit_if_default" is set, a public modifier on an interface method
-        // would be redundant — but we just test the rule doesn't crash.
-        var code = "class C { public void M() { } }";
-        var diags = await T.Run(new AccessibilityModifiersRule(), code,
-            T.Cfg(("dotnet_style_require_accessibility_modifiers", "omit_if_default:warning")));
-        Assert.NotNull(diags);
+        var diags = await T.Run(new AccessibilityModifiersRule(),
+            "class C { void M() { } }",
+            T.Cfg(("dotnet_style_require_accessibility_modifiers", "omit_if_default")));
+        Assert.False(diags.Has("CS032"));
     }
 
     [Fact]
     public async Task Accessibility_flags_field_property_and_constructor()
     {
-        var code = "class C { int x; void M() { } }";
-        var diags = await T.Run(new AccessibilityModifiersRule(), code,
-            T.Cfg(("dotnet_style_require_accessibility_modifiers", "always:warning")));
-        Assert.True(diags.Has("CS032"));
+        var diags = await T.Run(new AccessibilityModifiersRule(),
+            "class C { int F; int P { get; set; } C() { } }",
+            T.Cfg(("dotnet_style_require_accessibility_modifiers", "always")));
+        Assert.True(diags.Count(d => d.Rule == "CS032") >= 3);
     }
 
     [Fact]
     public async Task ObjectInitializer_single_assignment_is_clean()
     {
-        // A single assignment immediately after `new` is a candidate for initializer.
-        // But a subsequent unrelated assignment is not.
-        var code = """
-            class P { public int X; }
-            class C {
-                void M() {
-                    var p = new P();
-                    p.X = 1;
-                }
-            }
-            """;
-        var diags = await T.Run(new ObjectInitializerRule(), code,
-            T.Cfg(("dotnet_style_object_initializer", "true:warning")));
-        // Depending on implementation, this may or may not flag. Just no crash.
-        Assert.NotNull(diags);
+        var diags = await T.Run(new ObjectInitializerRule(),
+            "class C { public int A; void M() { var c = new C(); c.A = 1; } }",
+            T.Cfg(("dotnet_style_object_initializer", "true")));
+        Assert.False(diags.Has("CS034"));
     }
 
     [Fact]
-    public async Task Rule_applies_to_predicates()
+    public void Rule_applies_to_predicates()
     {
-        // Spot-check AppliesTo guards: missing config key → rule is silent.
-        Assert.False(new NamespaceDeclarationStyleRule().AppliesTo(T.Cfg()));
-        Assert.False(new ReadonlyFieldRule().AppliesTo(T.Cfg()));
-        Assert.False(new QualificationRule().AppliesTo(T.Cfg()));
+        Assert.True(new DynamicUsageRule().AppliesTo(T.Cfg()));
+        Assert.True(new ExpressionBodyRule().AppliesTo(
+            T.Cfg(("csharp_style_expression_bodied_methods", "true"))));
+        Assert.False(new ExpressionBodyRule().AppliesTo(T.Cfg(("x", "y"))));
+        Assert.True(new QualificationRule().AppliesTo(
+            T.Cfg(("dotnet_style_qualification_for_method", "false"))));
     }
 }

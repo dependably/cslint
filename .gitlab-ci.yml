@@ -5,7 +5,7 @@
 #                                                 ↘  mirror-to-github (manual, default branch only)
 #
 #   test            build + integration tests (tests/RunTests.sh against fixtures),
-#                   format check (advisory), secret + SAST + Sonar scans
+#                   format check (enforced), secret + SAST + Sonar scans
 #   pack            `dotnet pack` the .nupkg tool, kept as a job artifact
 #   sbom            generate a CycloneDX SBOM (every pipeline), kept as an artifact
 #   sbom-publish    upload the SBOM to Dependency-Track (default branch, if configured)
@@ -23,6 +23,7 @@
 #   SNYK_TOKEN            Snyk (SAST) token. UNPROTECTED + masked so MR pipelines can scan.
 #   SONAR_HOST_URL        SonarQube server URL (not a secret)
 #   SONAR_TOKEN           SonarQube analysis token (masked)
+#   SONAR_PROJECT_KEY     SonarQube project key (the project must exist on SONAR_HOST_URL)
 #   GITHUB_TOKEN          GitHub PAT with Contents:write on dependably/cslint, used by mirror.
 
 workflow:
@@ -67,20 +68,19 @@ build-test:
   script:
     - dotnet restore cslint.csproj --locked-mode
     - dotnet build cslint.csproj -c Release --no-restore
-    # cslint's test suite is an integration harness (tests/RunTests.sh) that runs the
-    # tool against the fixture files and checks the findings. Install the freshly packed
-    # tool onto PATH, then run it.
+    # Unit tests exercise the internal rule/engine surface directly (xUnit).
+    - dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
+    # cslint's integration harness (tests/RunTests.sh) also runs the tool against the
+    # fixture files and checks the findings. Install the freshly packed tool onto PATH.
     - dotnet pack cslint.csproj -c Release --no-restore -o artifacts
     - dotnet tool install --global --add-source artifacts Dependably.CsLint
     - export PATH="$PATH:$HOME/.dotnet/tools"
     - bash tests/RunTests.sh
 
-# Advisory for now: cslint's own source has not been run through `dotnet format`. Flip
-# allow_failure to false once the tree is clean (or replace with `cslint` dogfooding).
+# Enforced: cslint's source is `dotnet format` clean and must stay that way.
 format:
   stage: test
   <<: *dotnet_cache
-  allow_failure: true
   script:
     - dotnet format cslint.csproj --verify-no-changes
 
@@ -116,8 +116,12 @@ snyk-code:
   script:
     - snyk code test --severity-threshold=high
 
-# SonarQube analysis. Advisory, default-branch only, only when SONAR_TOKEN is set.
-# TODO(suite): create the SonarQube project and replace the placeholder key below.
+# SonarQube analysis. Advisory, default-branch only, only when the project key + token
+# are set. The token is passed explicitly via /d:sonar.token — the SONAR_TOKEN env var
+# alone is NOT honored by the scanner's begin step against the suite's SonarQube 9.9
+# server ("Authentication with the server has failed"). Safe in the trace: GitLab echoes
+# the literal $SONAR_TOKEN, never the expanded value. SONAR_TOKEN must be masked; set
+# SONAR_PROJECT_KEY to the project's key on $SONAR_HOST_URL.
 sonarqube-check:
   stage: test
   variables:
@@ -128,18 +132,26 @@ sonarqube-check:
     paths:
       - .sonar/cache
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SONAR_TOKEN'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SONAR_TOKEN && $SONAR_PROJECT_KEY'
   before_script:
     - apt-get update && apt-get install --yes --no-install-recommends openjdk-17-jre-headless
     - dotnet tool install --global dotnet-sonarscanner
     - export PATH="$PATH:$HOME/.dotnet/tools"
   script:
     - dotnet sonarscanner begin
-      /k:"REPLACE_WITH_SONAR_PROJECT_KEY"
+      /k:"$SONAR_PROJECT_KEY"
+      /d:sonar.token="$SONAR_TOKEN"
       /d:sonar.host.url="$SONAR_HOST_URL"
-      /d:sonar.login="$SONAR_TOKEN"
+      /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
     - dotnet build cslint.csproj -c Release
-    - dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+    # Run the unit tests under coverlet to emit an OpenCover report of cslint's lines/branches,
+    # which the scanner ingests via sonar.cs.opencover.reportsPaths (the test project is marked
+    # IsTestProject, so its own code is excluded from issue analysis but still measures coverage).
+    - dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
+      /p:CollectCoverage=true
+      /p:CoverletOutputFormat=opencover
+      /p:CoverletOutput="$CI_PROJECT_DIR/coverage.opencover.xml"
+    - dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
   allow_failure: true
 
 pack:

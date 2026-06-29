@@ -15,8 +15,6 @@ public class SemanticEngineTests
         return (tree.GetRoot(), comp.GetSemanticModel(tree));
     }
 
-    // ── CheckReadonlyFields ────────────────────────────────────────────────────
-
     [Fact]
     public void CheckReadonlyFields_flags_field_only_set_in_ctor()
     {
@@ -44,8 +42,6 @@ public class SemanticEngineTests
         Assert.Empty(CsLint.SemanticEngine.CheckReadonlyFields("C.cs", root, model, T.Cfg()));
     }
 
-    // ── CheckVarStyle ──────────────────────────────────────────────────────────
-
     [Fact]
     public void CheckVarStyle_flags_builtin_type()
     {
@@ -69,6 +65,30 @@ public class SemanticEngineTests
     {
         var (root, model) = Compile("class C { void M() { int x = 1; } }");
         Assert.Empty(CsLint.SemanticEngine.CheckVarStyle("C.cs", root, model, T.Cfg()));
+    }
+
+    [Fact]
+    public void GetEffectiveSeverity_maps_compiler_and_overrides()
+    {
+        var (_, model) = Compile("class C { void M() { int unused = nonexistent; } }");
+        var compErr = model.Compilation.GetDiagnostics()
+            .First(d => d.Severity == DiagnosticSeverity.Error);
+
+        // Without an override, an error stays an error.
+        Assert.Equal(Severity.Error,
+            CsLint.SemanticEngine.GetEffectiveSeverity(compErr, new()));
+
+        // An override of "none" suppresses it.
+        var overrides = new Dictionary<string, Severity?> { [compErr.Id] = null };
+        Assert.Null(CsLint.SemanticEngine.GetEffectiveSeverity(compErr, overrides));
+    }
+
+    [Fact]
+    public void TryRegisterMsBuild_returns_bool()
+    {
+        // Smoke: registration either succeeds or reports an error string, never throws.
+        var ok = CsLint.SemanticEngine.TryRegisterMsBuild(out var error);
+        Assert.True(ok || error != null);
     }
 
     // ── CheckUnusedUsings ──────────────────────────────────────────────────────
@@ -153,33 +173,5 @@ public class SemanticEngineTests
             "C.cs", model,
             T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
         Assert.Contains(diags, d => d.Rule == "IDE0005" && d.Line == 1);
-    }
-
-    // ── GetEffectiveSeverity ───────────────────────────────────────────────────
-
-    [Fact]
-    public void GetEffectiveSeverity_maps_compiler_and_overrides()
-    {
-        var (_, model) = Compile("class C { void M() { int unused = nonexistent; } }");
-        var compErr = model.Compilation.GetDiagnostics()
-            .First(d => d.Severity == DiagnosticSeverity.Error);
-
-        // Without an override, an error stays an error.
-        Assert.Equal(Severity.Error,
-            CsLint.SemanticEngine.GetEffectiveSeverity(compErr, new()));
-
-        // An override of "none" suppresses it.
-        var overrides = new Dictionary<string, Severity?> { [compErr.Id] = null };
-        Assert.Null(CsLint.SemanticEngine.GetEffectiveSeverity(compErr, overrides));
-    }
-
-    // ── TryRegisterMsBuild ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void TryRegisterMsBuild_returns_bool()
-    {
-        // Smoke: registration either succeeds or reports an error string, never throws.
-        var ok = CsLint.SemanticEngine.TryRegisterMsBuild(out var error);
-        Assert.True(ok || error != null);
     }
 }

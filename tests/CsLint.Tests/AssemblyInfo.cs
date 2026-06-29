@@ -1,3 +1,3 @@
-// Run xUnit tests serially within this assembly. Some tests redirect Console.Out or
-// write to shared temp paths, so parallelism would produce non-deterministic results.
+// Several tests redirect the process-global Console.Out to assert on Reporter / CLI output.
+// Running test classes in parallel races on that shared stream, so serialize the suite.
 [assembly: Xunit.CollectionBehavior(DisableTestParallelization = true)]

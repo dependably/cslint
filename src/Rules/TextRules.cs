@@ -195,29 +195,34 @@ sealed class LineEndingRule : TextRule
 
         for (int i = 0; i < text.Length; i++)
         {
-            if (text[i] == '\r')
-            {
-                bool isCrlf = i + 1 < text.Length && text[i + 1] == '\n';
-                if (eol == "lf")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id,
-                        isCrlf ? "CRLF line ending; expected LF." : "CR line ending; expected LF."));
-                else if (eol == "crlf" && !isCrlf)
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "CR line ending; expected CRLF."));
-                if (isCrlf) i++;
-                lineNum++;
-            }
-            else if (text[i] == '\n')
-            {
-                if (eol == "crlf")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "LF line ending; expected CRLF."));
-                else if (eol == "cr")
-                    diagnostics.Add(Warn(filePath, lineNum, 0, Id, "LF line ending; expected CR."));
-                lineNum++;
-            }
+            var c = text[i];
+            if (c != '\r' && c != '\n') continue;
+
+            bool isCrlf = c == '\r' && i + 1 < text.Length && text[i + 1] == '\n';
+            var message = c == '\r' ? CarriageReturnMessage(eol, isCrlf) : LineFeedMessage(eol);
+            if (message != null)
+                diagnostics.Add(Warn(filePath, lineNum, 0, Id, message));
+
+            if (isCrlf) i++;
+            lineNum++;
         }
 
         return diagnostics;
     }
+
+    static string? CarriageReturnMessage(string eol, bool isCrlf) => eol switch
+    {
+        "lf" => isCrlf ? "CRLF line ending; expected LF." : "CR line ending; expected LF.",
+        "crlf" => isCrlf ? null : "CR line ending; expected CRLF.",
+        _ => null
+    };
+
+    static string? LineFeedMessage(string eol) => eol switch
+    {
+        "crlf" => "LF line ending; expected CRLF.",
+        "cr" => "LF line ending; expected CR.",
+        _ => null
+    };
 
     protected override string? ApplyFix(string text, FileConfig config)
     {
@@ -226,8 +231,8 @@ sealed class LineEndingRule : TextRule
         return eol switch
         {
             "crlf" => normalised.Replace("\n", "\r\n"),
-            "cr"   => normalised.Replace("\n", "\r"),
-            _      => normalised
+            "cr" => normalised.Replace("\n", "\r"),
+            _ => normalised
         };
     }
 }
@@ -265,6 +270,8 @@ sealed class CharsetRule : IRule
     const byte Utf8Bom0 = 0xEF, Utf8Bom1 = 0xBB, Utf8Bom2 = 0xBF;
     const byte Utf16MarkFE = 0xFE, Utf16MarkFF = 0xFF;
     const int Utf8BomLength = 3;
+    const int Utf16BomLength = 2;
+    static readonly byte[] Utf8BomSignature = [Utf8Bom0, Utf8Bom1, Utf8Bom2];
 
     public string Id => "EC006";
 
@@ -316,11 +323,11 @@ sealed class CharsetRule : IRule
 
     static (string Encoding, bool HasBom) DetectEncoding(byte[] bytes)
     {
-        if (bytes.Length >= Utf8BomLength && bytes[0] == Utf8Bom0 && bytes[1] == Utf8Bom1 && bytes[2] == Utf8Bom2)
+        if (bytes.Length >= Utf8BomLength && bytes.AsSpan(0, Utf8BomLength).SequenceEqual(Utf8BomSignature))
             return ("utf-8", true);
-        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFE && bytes[1] == Utf16MarkFF)
+        if (bytes.Length >= Utf16BomLength && bytes[0] == Utf16MarkFE && bytes[1] == Utf16MarkFF)
             return ("utf-16be", true);
-        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFF && bytes[1] == Utf16MarkFE)
+        if (bytes.Length >= Utf16BomLength && bytes[0] == Utf16MarkFF && bytes[1] == Utf16MarkFE)
             return ("utf-16le", true);
         return ("utf-8", false);
     }
