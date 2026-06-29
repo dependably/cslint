@@ -322,12 +322,17 @@ sealed class UnusedValueRule : IRule
         var name = variable.Identifier.Text;
         if (name.StartsWith('_') || variable.Initializer == null) return;
 
-        var parent = local.Parent;
-        if (parent == null) return;
+        // Search the whole enclosing scope, not just local.Parent: in top-level statements each
+        // statement is its own GlobalStatement, so a use in a *later* statement (e.g. a fluent
+        // builder chain referenced lines below) is a sibling, not a descendant — missing it
+        // produced false "unused" reports.
+        SyntaxNode? scope = local.FirstAncestorOrSelf<BlockSyntax>();
+        scope ??= local.FirstAncestorOrSelf<CompilationUnitSyntax>();
+        if (scope == null) return;
 
-        bool usedAfter = parent.DescendantNodes()
+        bool usedAfter = scope.DescendantNodes()
             .OfType<IdentifierNameSyntax>()
-            .Any(id => id.Identifier.Text == name && id.SpanStart > local.SpanStart);
+            .Any(id => id.Identifier.Text == name && id.SpanStart > local.Span.End);
         if (usedAfter) return;
 
         var loc = variable.Identifier.GetLocation().GetLineSpan();

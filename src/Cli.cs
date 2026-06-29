@@ -110,7 +110,10 @@ static class Cli
         var errors = allDiagnostics.Count(d => d.Severity == Severity.Error);
         var warnings = allDiagnostics.Count(d => d.Severity == Severity.Warning);
 
-        Console.WriteLine($"Checked {totalFiles} file{(totalFiles != 1 ? "s" : "")}. " +
+        // The human summary line must not land on stdout for machine formats, or it corrupts
+        // the JSON document / GitHub-annotation stream. Send it to stderr there instead.
+        var summaryWriter = options.Format == OutputFormat.Text ? Console.Out : Console.Error;
+        summaryWriter.WriteLine($"Checked {totalFiles} file{(totalFiles != 1 ? "s" : "")}. " +
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode ? " + semantic" : "") + ".");
 
@@ -118,9 +121,16 @@ static class Cli
 
         if (options.Strict && warnings > 0 && errors == 0)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("--strict: warnings treated as errors.");
-            Console.ResetColor();
+            if (options.Format == OutputFormat.Text)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("--strict: warnings treated as errors.");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.Error.WriteLine("--strict: warnings treated as errors.");
+            }
         }
 
         return 1;
@@ -147,7 +157,28 @@ static class Cli
     /// </summary>
     public static (bool Resolved, IEnumerable<string> Targets) ResolveTargets(CliOptions opts)
     {
-        if (opts.Files.Count > 0) return (true, Filter(opts.Files, opts));
+        if (opts.Files.Count > 0)
+        {
+            var expanded = new List<string>();
+            var notFound = new List<string>();
+            foreach (var path in opts.Files)
+            {
+                var matches = PathFilter.ExpandTarget(path).ToList();
+                // A literal path (no wildcard) that matched nothing simply does not exist.
+                if (matches.Count == 0 && !path.Contains('*') && !path.Contains('?'))
+                    notFound.Add(path);
+                expanded.AddRange(matches);
+            }
+
+            if (notFound.Count > 0)
+            {
+                foreach (var p in notFound)
+                    Console.Error.WriteLine($"Path not found: {p}");
+                return (false, []);
+            }
+
+            return (true, Filter(expanded.Where(f => !IsGenerated(f)).Distinct(), opts));
+        }
 
         if (opts.Global)
         {

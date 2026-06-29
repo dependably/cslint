@@ -84,10 +84,47 @@ public class CliTests
     [Fact]
     public void ResolveTargets_explicit_files()
     {
-        var o = Cli.ParseOptions(["Foo.cs", "Bar.cs"]);
-        var (resolved, targets) = Cli.ResolveTargets(o);
-        Assert.True(resolved);
-        Assert.Equal(2, targets.Count());
+        var dir = T.TempDir();
+        var foo = Path.Combine(dir, "Foo.cs");
+        var bar = Path.Combine(dir, "Bar.cs");
+        File.WriteAllText(foo, "class Foo { }");
+        File.WriteAllText(bar, "class Bar { }");
+        try
+        {
+            var o = Cli.ParseOptions([foo, bar]);
+            var (resolved, targets) = Cli.ResolveTargets(o);
+            Assert.True(resolved);
+            Assert.Equal(2, targets.Count());
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ResolveTargets_missing_path_is_an_error()
+    {
+        // A literal path that does not exist must fail loudly, not silently lint nothing.
+        var o = Cli.ParseOptions([Path.Combine(T.TempDir(), "DoesNotExist.cs")]);
+        var (resolved, _) = Cli.ResolveTargets(o);
+        Assert.False(resolved);
+    }
+
+    [Fact]
+    public void ResolveTargets_expands_directory_argument()
+    {
+        var dir = T.TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, "sub"));
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+        File.WriteAllText(Path.Combine(dir, "sub", "B.cs"), "class B { }");
+        try
+        {
+            var o = Cli.ParseOptions([dir]);
+            var (resolved, targets) = Cli.ResolveTargets(o);
+            Assert.True(resolved);
+            var list = targets.ToList();
+            Assert.Contains(list, p => p.EndsWith("A.cs"));
+            Assert.Contains(list, p => p.EndsWith("B.cs"));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]

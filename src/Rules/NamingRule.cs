@@ -24,32 +24,53 @@ sealed class NamingRule : IRule
 
         foreach (var node in root.DescendantNodes())
         {
-            foreach (var (symbolKind, name, location) in ExtractSymbols(node))
+            foreach (var symbol in ExtractSymbols(node))
             {
-                if (name == null || location == null) continue;
+                if (symbol.Name == null || symbol.Location == null) continue;
 
-                var matchedRule = rules.FirstOrDefault(r => r.Symbols.Contains(symbolKind));
+                // Match the first rule whose symbol spec applies — honouring not just the
+                // symbol kind but also required_modifiers and applicable_accessibilities, the
+                // way Roslyn does. Skipping the latter two made every field match a
+                // const-only rule (CS040 false positives on `_camelCase` instance fields).
+                var matchedRule = rules.FirstOrDefault(r =>
+                    r.Symbols.Contains(symbol.Kind)
+                    && r.Modifiers.All(m => symbol.Modifiers.Contains(m))
+                    && AccessibilityMatches(r.Accessibilities, symbol.Accessibility));
                 if (matchedRule == null) continue;
 
-                if (!ValidateName(name, matchedRule.Style))
+                if (!ValidateName(symbol.Name, matchedRule.Style))
                 {
-                    var loc = location.GetLineSpan();
+                    var loc = symbol.Location.GetLineSpan();
                     diagnostics.Add(StyleHelper.Make(filePath,
                         loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        $"Name '{name}' violates naming rule '{matchedRule.Name}': expected {DescribeStyle(matchedRule.Style)}.",
+                        $"Name '{symbol.Name}' violates naming rule '{matchedRule.Name}': expected {DescribeStyle(matchedRule.Style)}.",
                         matchedRule.Severity));
                 }
-                break;
             }
         }
 
         return diagnostics;
     }
 
+    // A rule with no applicable_accessibilities (or the '*' wildcard) applies to any
+    // accessibility; otherwise the symbol's effective accessibility must be listed.
+    static bool AccessibilityMatches(HashSet<string> ruleAccessibilities, string symbolAccessibility) =>
+        ruleAccessibilities.Count == 0
+        || ruleAccessibilities.Contains("*")
+        || ruleAccessibilities.Contains(symbolAccessibility);
+
+    record SymbolInfo(
+        string Kind,
+        string? Name,
+        Location? Location,
+        HashSet<string> Modifiers,
+        string Accessibility);
+
     record NamingRuleDefinition(
         string Name,
         HashSet<string> Symbols,
         HashSet<string> Modifiers,
+        HashSet<string> Accessibilities,
         NamingStyleDefinition Style,
         Severity Severity,
         int Priority);
@@ -86,10 +107,12 @@ sealed class NamingRule : IRule
 
             var symbols = ParseSymbols(symbolGroup, props);
             var modifiers = ParseModifiers(symbolGroup, props);
+            var accessibilities = ParseAccessibilities(symbolGroup, props);
             var style = ParseStyle(styleName, props);
             var priority = int.TryParse(props.GetValueOrDefault($"{prefix}priority", "0"), out var p) ? p : 0;
 
-            rules.Add(new NamingRuleDefinition(ruleName!, symbols, modifiers, style, severity, priority));
+            rules.Add(new NamingRuleDefinition(
+                ruleName!, symbols, modifiers, accessibilities, style, severity, priority));
         }
 
         return rules.OrderByDescending(r => r.Priority).ToList();
@@ -106,6 +129,14 @@ sealed class NamingRule : IRule
     static HashSet<string> ParseModifiers(string groupName, IReadOnlyDictionary<string, string> props)
     {
         var key = $"dotnet_naming_symbols.{groupName}.required_modifiers";
+        var raw = props.GetValueOrDefault(key, "");
+        return raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    static HashSet<string> ParseAccessibilities(string groupName, IReadOnlyDictionary<string, string> props)
+    {
+        var key = $"dotnet_naming_symbols.{groupName}.applicable_accessibilities";
         var raw = props.GetValueOrDefault(key, "");
         return raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -158,30 +189,56 @@ sealed class NamingRule : IRule
         return desc;
     }
 
-    static (string Kind, string? Name, Location? Location)[] ExtractSymbols(SyntaxNode node)
+    static SymbolInfo[] ExtractSymbols(SyntaxNode node)
     {
         return node switch
         {
-            ClassDeclarationSyntax c => [("class", c.Identifier.Text, c.Identifier.GetLocation())],
-            InterfaceDeclarationSyntax i => [("interface", i.Identifier.Text, i.Identifier.GetLocation())],
-            StructDeclarationSyntax s => [("struct", s.Identifier.Text, s.Identifier.GetLocation())],
-            EnumDeclarationSyntax e => [("enum", e.Identifier.Text, e.Identifier.GetLocation())],
-            RecordDeclarationSyntax r => [("class", r.Identifier.Text, r.Identifier.GetLocation())],
-            DelegateDeclarationSyntax d => [("delegate", d.Identifier.Text, d.Identifier.GetLocation())],
-            MethodDeclarationSyntax m => [("method", m.Identifier.Text, m.Identifier.GetLocation())],
-            PropertyDeclarationSyntax p => [("property", p.Identifier.Text, p.Identifier.GetLocation())],
-            EventDeclarationSyntax ev => [("event", ev.Identifier.Text, ev.Identifier.GetLocation())],
-            ParameterSyntax par => [("parameter", par.Identifier.Text, par.Identifier.GetLocation())],
-            TypeParameterSyntax tp => [("type_parameter", tp.Identifier.Text, tp.Identifier.GetLocation())],
+            ClassDeclarationSyntax c => [Make("class", c.Identifier, c.Modifiers, node)],
+            InterfaceDeclarationSyntax i => [Make("interface", i.Identifier, i.Modifiers, node)],
+            StructDeclarationSyntax s => [Make("struct", s.Identifier, s.Modifiers, node)],
+            EnumDeclarationSyntax e => [Make("enum", e.Identifier, e.Modifiers, node)],
+            RecordDeclarationSyntax r => [Make("class", r.Identifier, r.Modifiers, node)],
+            DelegateDeclarationSyntax d => [Make("delegate", d.Identifier, d.Modifiers, node)],
+            MethodDeclarationSyntax m => [Make("method", m.Identifier, m.Modifiers, node)],
+            PropertyDeclarationSyntax p => [Make("property", p.Identifier, p.Modifiers, node)],
+            EventDeclarationSyntax ev => [Make("event", ev.Identifier, ev.Modifiers, node)],
+            ParameterSyntax par => [Make("parameter", par.Identifier, par.Modifiers, node)],
+            TypeParameterSyntax tp => [Make("type_parameter", tp.Identifier, default, node)],
             FieldDeclarationSyntax f => f.Declaration.Variables
-                .Select(v => MakeSymbol("field", v.Identifier)).ToArray(),
+                .Select(v => Make("field", v.Identifier, f.Modifiers, node)).ToArray(),
             LocalDeclarationStatementSyntax l => l.Declaration.Variables
-                .Select(v => MakeSymbol("local", v.Identifier)).ToArray(),
+                .Select(v => Make("local", v.Identifier, l.Modifiers, node)).ToArray(),
             _ => []
         };
     }
 
-    static (string Kind, string? Name, Location? Location) MakeSymbol(
-        string kind, SyntaxToken identifier) =>
-        (kind, identifier.Text, identifier.GetLocation());
+    static SymbolInfo Make(string kind, SyntaxToken identifier, SyntaxTokenList modifiers, SyntaxNode node)
+    {
+        var mods = modifiers.Select(m => m.Text).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new SymbolInfo(kind, identifier.Text, identifier.GetLocation(), mods,
+            EffectiveAccessibility(kind, mods, node));
+    }
+
+    // The editorconfig accessibility token for the declaration. When no access modifier is
+    // present we fall back to the C# default: nested members and types default to private,
+    // top-level types to internal.
+    static string EffectiveAccessibility(string kind, HashSet<string> mods, SyntaxNode node)
+    {
+        bool pub = mods.Contains("public");
+        bool priv = mods.Contains("private");
+        bool prot = mods.Contains("protected");
+        bool intern = mods.Contains("internal");
+
+        if (pub) return "public";
+        if (priv && prot) return "private_protected";
+        if (prot && intern) return "protected_internal";
+        if (prot) return "protected";
+        if (intern) return "internal";
+        if (priv) return "private";
+
+        var isType = kind is "class" or "struct" or "interface" or "enum" or "delegate";
+        if (isType && node.Parent is BaseNamespaceDeclarationSyntax or CompilationUnitSyntax)
+            return "internal";
+        return kind is "local" or "parameter" or "type_parameter" ? "local" : "private";
+    }
 }

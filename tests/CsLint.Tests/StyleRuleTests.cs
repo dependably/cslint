@@ -138,6 +138,17 @@ public class StyleRuleTests
         Assert.True(diags.Has("CS024"));
     }
 
+    // Regression: in top-level statements each statement is its own GlobalStatement, so a use in
+    // a later statement (a fluent chain referencing the variable below) must still count as used.
+    [Fact]
+    public async Task CS024_clean_when_used_in_later_top_level_statement()
+    {
+        var diags = await T.Run(new UnusedValueRule(),
+            "var cfg = new System.Text.StringBuilder();\nSystem.Console.WriteLine(cfg.ToString());\n",
+            T.Cfg(("csharp_style_unused_value_assignment_preference", "discard_variable")));
+        Assert.False(diags.Has("CS024"));
+    }
+
     // CS030 — this. qualification
     [Fact]
     public async Task CS030_flags_this_qualifier()
@@ -187,6 +198,17 @@ public class StyleRuleTests
         Assert.False(diags.Has("CS032"));
     }
 
+    // Regression: a static constructor cannot legally take an access modifier — never flag it.
+    [Fact]
+    public async Task CS032_ignores_static_constructor()
+    {
+        // The class carries a modifier so the static constructor is the only candidate under test.
+        var diags = await T.Run(new AccessibilityModifiersRule(),
+            "internal class C { static C() { } }",
+            T.Cfg(("dotnet_style_require_accessibility_modifiers", "always")));
+        Assert.False(diags.Has("CS032"));
+    }
+
     // CS033 — readonly field
     [Fact]
     public async Task CS033_flags_readonly_candidate()
@@ -202,6 +224,17 @@ public class StyleRuleTests
     {
         var diags = await T.Run(new ReadonlyFieldRule(),
             "class C { private int x = 5; void M() { x = 6; } }",
+            T.Cfg(("dotnet_style_readonly_field", "true")));
+        Assert.False(diags.Has("CS033"));
+    }
+
+    // Regression: a field passed by ref (e.g. Interlocked.Add(ref _x, …)) is mutated and cannot
+    // legally be readonly — passing a readonly field by ref outside a ctor is a compile error.
+    [Fact]
+    public async Task CS033_clean_when_passed_by_ref()
+    {
+        var diags = await T.Run(new ReadonlyFieldRule(),
+            "class C { private long _x; void M() { System.Threading.Interlocked.Add(ref _x, 1); } }",
             T.Cfg(("dotnet_style_readonly_field", "true")));
         Assert.False(diags.Has("CS033"));
     }
@@ -265,4 +298,38 @@ public class StyleRuleTests
     [Fact]
     public void CS040_does_not_apply_without_naming_rules() =>
         Assert.False(new NamingRule().AppliesTo(T.Cfg(("indent_style", "tab"))));
+
+    // Regression: a const-only rule (PascalCase) and a private-field rule (_camelCase) coexist.
+    // A `private readonly` field is NOT const and must match the private rule, which it satisfies
+    // — earlier the engine ignored required_modifiers and flagged it against the const rule.
+    static FileConfig FieldNamingCfg() => T.Cfg(
+        ("dotnet_naming_rule.const_fields_pascal.symbols", "const_fields"),
+        ("dotnet_naming_rule.const_fields_pascal.style", "pascal"),
+        ("dotnet_naming_rule.const_fields_pascal.severity", "warning"),
+        ("dotnet_naming_symbols.const_fields.applicable_kinds", "field"),
+        ("dotnet_naming_symbols.const_fields.required_modifiers", "const"),
+        ("dotnet_naming_rule.private_fields_underscore.symbols", "private_fields"),
+        ("dotnet_naming_rule.private_fields_underscore.style", "underscore"),
+        ("dotnet_naming_rule.private_fields_underscore.severity", "warning"),
+        ("dotnet_naming_symbols.private_fields.applicable_kinds", "field"),
+        ("dotnet_naming_symbols.private_fields.applicable_accessibilities", "private"),
+        ("dotnet_naming_style.pascal.capitalization", "pascal_case"),
+        ("dotnet_naming_style.underscore.capitalization", "camel_case"),
+        ("dotnet_naming_style.underscore.required_prefix", "_"));
+
+    [Fact]
+    public async Task CS040_private_readonly_field_not_judged_by_const_rule()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { private readonly int _semaphore = 0; }", FieldNamingCfg());
+        Assert.False(diags.Has("CS040"));
+    }
+
+    [Fact]
+    public async Task CS040_actual_const_still_held_to_pascal_case()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { private const int max_active = 1; }", FieldNamingCfg());
+        Assert.True(diags.Has("CS040"));
+    }
 }
