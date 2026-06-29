@@ -11,11 +11,19 @@ A C# linter with three distinct tiers:
 
 ## Installation
 
+Requires the .NET 10 SDK.
+
+**From source (works today):**
+
+```bash
+dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint
+```
+
+**Once published to nuget.org:**
+
 ```bash
 dotnet tool install --global Dependably.CsLint
 ```
-
-Requires .NET 10 SDK.
 
 ---
 
@@ -266,16 +274,25 @@ This means Roslyn's formatter is the source of truth — the same engine Visual 
 
 ## Running tests
 
-Install cslint, then:
+**Unit tests (no global install needed):**
 
 ```bash
+dotnet test tests/CsLint.Tests/CsLint.Tests.csproj
+```
+
+The xUnit suite exercises the rule/engine/config/CLI surface directly.
+
+**Integration fixtures (requires the packed tool installed globally):**
+
+```bash
+dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint
 bash tests/RunTests.sh
 ```
 
-Each test invokes `cslint` against a known-bad fixture file and asserts the expected rule ID appears in the output.
+Each integration test invokes the installed `cslint` against a known-bad fixture file and asserts the expected rule ID appears in the output.
 
 ---
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE).
