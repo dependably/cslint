@@ -327,7 +327,9 @@ sealed class ObjectInitializerRule : IRule
             .OfType<AssignmentExpressionSyntax>()
             .Count(a => IsPropertyOfVar(a.Left, localName));
 
-        if (nextAssignments >= 2)
+        // Two or more property writes right after the `new` is the threshold for suggesting an initializer.
+        const int minPropertyAssignments = 2;
+        if (nextAssignments >= minPropertyAssignments)
         {
             var loc = creation.GetLocation().GetLineSpan();
             diagnostics.Add(StyleHelper.Make(filePath,

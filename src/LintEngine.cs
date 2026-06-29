@@ -80,22 +80,29 @@ class LintEngine
                 if (wasFixed) continue;
             }
 
-            try
-            {
-                var results = await rule.AnalyzeAsync(filePath, config);
-                foreach (var d in results)
-                {
-                    var adjusted = ApplySeverityOverride(d, config);
-                    if (adjusted is not null) diagnostics.Add(adjusted);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(filePath)}: {ex.Message}");
-            }
+            await RunRuleAsync(rule, filePath, config, diagnostics);
         }
 
         return diagnostics;
+    }
+
+    // Run one rule and fold its (severity-adjusted) findings into the list. Kept separate so the
+    // try / foreach / if nesting stays shallow.
+    async Task RunRuleAsync(IRule rule, string filePath, FileConfig config, List<Diagnostic> diagnostics)
+    {
+        try
+        {
+            var results = await rule.AnalyzeAsync(filePath, config);
+            foreach (var d in results)
+            {
+                var adjusted = ApplySeverityOverride(d, config);
+                if (adjusted is not null) diagnostics.Add(adjusted);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(filePath)}: {ex.Message}");
+        }
     }
 
     // Honour `dotnet_diagnostic.<RuleId>.severity` from .editorconfig for ANY cslint rule

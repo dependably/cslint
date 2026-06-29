@@ -125,8 +125,10 @@ sealed class ExpressionBodyRule : IRule
     static bool IsSingleLine(BlockSyntax block)
     {
         var span = block.GetLocation().GetLineSpan();
+        // A near-single-line block: one statement spanning at most this many lines.
+        const int maxSingleLineSpan = 2;
         return span.StartLinePosition.Line == span.EndLinePosition.Line ||
-               block.Statements.Count <= 1 && span.EndLinePosition.Line - span.StartLinePosition.Line <= 2;
+               block.Statements.Count <= 1 && span.EndLinePosition.Line - span.StartLinePosition.Line <= maxSingleLineSpan;
     }
 
     static bool IsSingleGetterProperty(PropertyDeclarationSyntax p) =>

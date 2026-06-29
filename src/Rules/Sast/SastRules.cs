@@ -337,7 +337,8 @@ sealed class PragmaDisableRule : IRule
         var commentIdx = line.IndexOf("//", StringComparison.Ordinal);
         if (commentIdx < 0) return false;
         const int minJustificationLength = 5;
-        return line[(commentIdx + 2)..].Trim().Length > minJustificationLength;
+        const int commentMarkerLength = 2; // "//"
+        return line[(commentIdx + commentMarkerLength)..].Trim().Length > minJustificationLength;
     }
 }
 

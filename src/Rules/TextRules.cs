@@ -270,6 +270,8 @@ sealed class CharsetRule : IRule
     const byte Utf8Bom0 = 0xEF, Utf8Bom1 = 0xBB, Utf8Bom2 = 0xBF;
     const byte Utf16MarkFE = 0xFE, Utf16MarkFF = 0xFF;
     const int Utf8BomLength = 3;
+    const int Utf16BomLength = 2;
+    static readonly byte[] Utf8BomSignature = [Utf8Bom0, Utf8Bom1, Utf8Bom2];
 
     public string Id => "EC006";
 
@@ -321,11 +323,11 @@ sealed class CharsetRule : IRule
 
     static (string Encoding, bool HasBom) DetectEncoding(byte[] bytes)
     {
-        if (bytes.Length >= Utf8BomLength && bytes[0] == Utf8Bom0 && bytes[1] == Utf8Bom1 && bytes[2] == Utf8Bom2)
+        if (bytes.Length >= Utf8BomLength && bytes.AsSpan(0, Utf8BomLength).SequenceEqual(Utf8BomSignature))
             return ("utf-8", true);
-        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFE && bytes[1] == Utf16MarkFF)
+        if (bytes.Length >= Utf16BomLength && bytes[0] == Utf16MarkFE && bytes[1] == Utf16MarkFF)
             return ("utf-16be", true);
-        if (bytes.Length >= 2 && bytes[0] == Utf16MarkFF && bytes[1] == Utf16MarkFE)
+        if (bytes.Length >= Utf16BomLength && bytes[0] == Utf16MarkFF && bytes[1] == Utf16MarkFE)
             return ("utf-16le", true);
         return ("utf-8", false);
     }
