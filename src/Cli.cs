@@ -16,6 +16,12 @@ static class Cli
     {
         var options = ParseOptions(args);
 
+        if (options.UnknownOption != null)
+        {
+            Console.Error.WriteLine($"unknown option: '{options.UnknownOption}'");
+            return ExitUsageError;
+        }
+
         if (options.ShowHelp) { PrintHelp(); return 0; }
         if (options.InstallHook) return InstallGitHook(options.Root);
 
@@ -375,8 +381,16 @@ static class Cli
             return i;
         }
 
-        if (!args[i].StartsWith('-'))
-            positional.Add(Path.GetFullPath(args[i]));
+        if (args[i].StartsWith('-'))
+        {
+            // Unrecognized token that looks like a flag (e.g. a typo'd --strict, or --bogus).
+            // Record it so the caller can reject the invocation instead of silently ignoring it,
+            // which would otherwise exit 0 with the intended behavior quietly disabled.
+            opts.UnknownOption ??= args[i];
+            return i;
+        }
+
+        positional.Add(Path.GetFullPath(args[i]));
         return i;
     }
 
@@ -467,6 +481,9 @@ sealed class CliOptions
     public string? ConfigPath { get; set; }
     public List<string> Files { get; set; } = [];
     public List<string> Exclude { get; set; } = [];
+
+    // First unrecognized token that looked like a flag (starts with '-'). Non-null => usage error.
+    public string? UnknownOption { get; set; }
 
     public bool FlagMagicNumbers { get; set; } = true;
     public bool FlagBoolFlags { get; set; } = true;
