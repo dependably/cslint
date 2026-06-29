@@ -6,3 +6,7 @@ artifacts/
 sbom.json
 *.user
 .DS_Store
+
+# Test coverage output
+TestResults/
+*.opencover.xml

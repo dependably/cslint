@@ -5,7 +5,7 @@
 #                                                 ↘  mirror-to-github (manual, default branch only)
 #
 #   test            build + integration tests (tests/RunTests.sh against fixtures),
-#                   format check (advisory), secret + SAST + Sonar scans
+#                   format check (enforced), secret + SAST + Sonar scans
 #   pack            `dotnet pack` the .nupkg tool, kept as a job artifact
 #   sbom            generate a CycloneDX SBOM (every pipeline), kept as an artifact
 #   sbom-publish    upload the SBOM to Dependency-Track (default branch, if configured)
@@ -68,20 +68,19 @@ build-test:
   script:
     - dotnet restore cslint.csproj --locked-mode
     - dotnet build cslint.csproj -c Release --no-restore
-    # cslint's test suite is an integration harness (tests/RunTests.sh) that runs the
-    # tool against the fixture files and checks the findings. Install the freshly packed
-    # tool onto PATH, then run it.
+    # Unit tests exercise the internal rule/engine surface directly (xUnit).
+    - dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
+    # cslint's integration harness (tests/RunTests.sh) also runs the tool against the
+    # fixture files and checks the findings. Install the freshly packed tool onto PATH.
     - dotnet pack cslint.csproj -c Release --no-restore -o artifacts
     - dotnet tool install --global --add-source artifacts Dependably.CsLint
     - export PATH="$PATH:$HOME/.dotnet/tools"
     - bash tests/RunTests.sh
 
-# Advisory for now: cslint's own source has not been run through `dotnet format`. Flip
-# allow_failure to false once the tree is clean (or replace with `cslint` dogfooding).
+# Enforced: cslint's source is `dotnet format` clean and must stay that way.
 format:
   stage: test
   <<: *dotnet_cache
-  allow_failure: true
   script:
     - dotnet format cslint.csproj --verify-no-changes
 
@@ -143,7 +142,15 @@ sonarqube-check:
       /k:"$SONAR_PROJECT_KEY"
       /d:sonar.token="$SONAR_TOKEN"
       /d:sonar.host.url="$SONAR_HOST_URL"
+      /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
     - dotnet build cslint.csproj -c Release
+    # Run the unit tests under coverlet to emit an OpenCover report of cslint's lines/branches,
+    # which the scanner ingests via sonar.cs.opencover.reportsPaths (the test project is marked
+    # IsTestProject, so its own code is excluded from issue analysis but still measures coverage).
+    - dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
+      /p:CollectCoverage=true
+      /p:CoverletOutputFormat=opencover
+      /p:CoverletOutput="$CI_PROJECT_DIR/coverage.opencover.xml"
     - dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
   allow_failure: true
 

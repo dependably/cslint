@@ -58,11 +58,21 @@ sealed class PredefinedTypeRule : IRule
 
     static readonly Dictionary<string, string> ClrToKeyword = new(StringComparer.Ordinal)
     {
-        ["Boolean"] = "bool",    ["Byte"]    = "byte",   ["SByte"]  = "sbyte",
-        ["Int16"]   = "short",   ["UInt16"]  = "ushort", ["Int32"]   = "int",
-        ["UInt32"]  = "uint",    ["Int64"]   = "long",   ["UInt64"]  = "ulong",
-        ["Single"]  = "float",   ["Double"]  = "double", ["Decimal"] = "decimal",
-        ["Char"]    = "char",    ["String"]  = "string", ["Object"]  = "object",
+        ["Boolean"] = "bool",
+        ["Byte"] = "byte",
+        ["SByte"] = "sbyte",
+        ["Int16"] = "short",
+        ["UInt16"] = "ushort",
+        ["Int32"] = "int",
+        ["UInt32"] = "uint",
+        ["Int64"] = "long",
+        ["UInt64"] = "ulong",
+        ["Single"] = "float",
+        ["Double"] = "double",
+        ["Decimal"] = "decimal",
+        ["Char"] = "char",
+        ["String"] = "string",
+        ["Object"] = "object",
     };
 
     public bool AppliesTo(FileConfig config) =>
@@ -76,7 +86,7 @@ sealed class PredefinedTypeRule : IRule
         var root = await tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
-        bool localsTrue  = StyleHelper.TryGet(config, "dotnet_style_predefined_type_for_locals_parameters_members", out var lVal, out var lSev) && lVal == "true";
+        bool localsTrue = StyleHelper.TryGet(config, "dotnet_style_predefined_type_for_locals_parameters_members", out var lVal, out var lSev) && lVal == "true";
         bool localsFalse = !localsTrue && lVal == "false" && lSev != default;
 
         foreach (var node in root.DescendantNodes())
@@ -167,13 +177,13 @@ sealed class AccessibilityModifiersRule : IRule
 
     static SyntaxTokenList? GetModifiers(MemberDeclarationSyntax member) => member switch
     {
-        BaseTypeDeclarationSyntax t    => t.Modifiers,
-        MethodDeclarationSyntax m      => m.Modifiers,
-        PropertyDeclarationSyntax p    => p.Modifiers,
-        FieldDeclarationSyntax f       => f.Modifiers,
-        EventDeclarationSyntax e       => e.Modifiers,
+        BaseTypeDeclarationSyntax t => t.Modifiers,
+        MethodDeclarationSyntax m => m.Modifiers,
+        PropertyDeclarationSyntax p => p.Modifiers,
+        FieldDeclarationSyntax f => f.Modifiers,
+        EventDeclarationSyntax e => e.Modifiers,
         ConstructorDeclarationSyntax c => c.Modifiers,
-        _                              => null
+        _ => null
     };
 
     static bool HasAccessModifier(SyntaxTokenList mods) => mods.Any(m =>
@@ -185,13 +195,13 @@ sealed class AccessibilityModifiersRule : IRule
 
     static string GetMemberName(MemberDeclarationSyntax member) => member switch
     {
-        BaseTypeDeclarationSyntax t    => t.Identifier.Text,
-        MethodDeclarationSyntax m      => m.Identifier.Text,
-        PropertyDeclarationSyntax p    => p.Identifier.Text,
-        FieldDeclarationSyntax f       => f.Declaration.Variables.FirstOrDefault()?.Identifier.Text ?? "?",
-        EventDeclarationSyntax e       => e.Identifier.Text,
+        BaseTypeDeclarationSyntax t => t.Identifier.Text,
+        MethodDeclarationSyntax m => m.Identifier.Text,
+        PropertyDeclarationSyntax p => p.Identifier.Text,
+        FieldDeclarationSyntax f => f.Declaration.Variables.FirstOrDefault()?.Identifier.Text ?? "?",
+        EventDeclarationSyntax e => e.Identifier.Text,
         ConstructorDeclarationSyntax c => c.Identifier.Text,
-        _                              => member.GetType().Name
+        _ => member.GetType().Name
     };
 }
 
@@ -218,42 +228,45 @@ sealed class ReadonlyFieldRule : IRule
             var mods = field.Modifiers;
             if (mods.Any(SyntaxKind.ReadOnlyKeyword) || mods.Any(SyntaxKind.ConstKeyword)) continue;
             if (!mods.Any(SyntaxKind.PrivateKeyword) && !mods.Any(SyntaxKind.ProtectedKeyword)) continue;
-
-            var containingType = field.Parent as TypeDeclarationSyntax;
-            if (containingType == null) continue;
+            if (field.Parent is not TypeDeclarationSyntax containingType) continue;
 
             foreach (var variable in field.Declaration.Variables)
-            {
-                var fieldName = variable.Identifier.Text;
-
-                var writtenOutsideDecl = containingType.DescendantNodes()
-                    .OfType<AssignmentExpressionSyntax>()
-                    .Any(a => IsAssignmentToField(a, fieldName));
-
-                var writtenInNonCtor = containingType.DescendantNodes()
-                    .OfType<AssignmentExpressionSyntax>()
-                    .Any(a => IsAssignmentToField(a, fieldName) && !IsInsideConstructor(a));
-
-                if (!writtenInNonCtor && !writtenOutsideDecl && variable.Initializer != null)
-                {
-                    var loc = variable.Identifier.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        $"Field '{fieldName}' could be declared as 'readonly' (dotnet_style_readonly_field = true).",
-                        severity));
-                }
-                else if (!writtenInNonCtor && writtenOutsideDecl)
-                {
-                    var loc = variable.Identifier.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        $"Field '{fieldName}' is only assigned in constructors; consider 'readonly' (dotnet_style_readonly_field = true).",
-                        severity));
-                }
-            }
+                CheckReadonlyCandidate(filePath, containingType, variable, severity, diagnostics);
         }
 
         return diagnostics;
+    }
+
+    void CheckReadonlyCandidate(
+        string filePath, TypeDeclarationSyntax containingType,
+        VariableDeclaratorSyntax variable, Severity severity, List<Diagnostic> diagnostics)
+    {
+        var fieldName = variable.Identifier.Text;
+
+        var writtenInNonCtor = containingType.DescendantNodes()
+            .OfType<AssignmentExpressionSyntax>()
+            .Any(a => IsAssignmentToField(a, fieldName) && !IsInsideConstructor(a));
+        if (writtenInNonCtor) return;
+
+        var writtenOutsideDecl = containingType.DescendantNodes()
+            .OfType<AssignmentExpressionSyntax>()
+            .Any(a => IsAssignmentToField(a, fieldName));
+
+        var loc = variable.Identifier.GetLocation().GetLineSpan();
+        var (line, col) = (loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1);
+
+        if (!writtenOutsideDecl && variable.Initializer != null)
+        {
+            diagnostics.Add(StyleHelper.Make(filePath, line, col, Id,
+                $"Field '{fieldName}' could be declared as 'readonly' (dotnet_style_readonly_field = true).",
+                severity));
+        }
+        else if (writtenOutsideDecl)
+        {
+            diagnostics.Add(StyleHelper.Make(filePath, line, col, Id,
+                $"Field '{fieldName}' is only assigned in constructors; consider 'readonly' (dotnet_style_readonly_field = true).",
+                severity));
+        }
     }
 
     static bool IsAssignmentToField(AssignmentExpressionSyntax a, string name) =>
@@ -285,39 +298,43 @@ sealed class ObjectInitializerRule : IRule
             out var objVal, out var objSev) && objVal == "true")
         {
             foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
-            {
-                var variable = local.Declaration.Variables.FirstOrDefault();
-                if (variable?.Initializer?.Value is not ObjectCreationExpressionSyntax creation) continue;
-                if (creation.Initializer != null) continue;
-
-                var localName = variable.Identifier.Text;
-                var parent    = local.Parent;
-                if (parent == null) continue;
-
-                var siblings = parent.ChildNodes().ToList();
-                var idx      = siblings.IndexOf(local);
-
-                const int maxLookaheadStatements = 5;
-                var nextAssignments = siblings.Skip(idx + 1)
-                    .Take(maxLookaheadStatements)
-                    .OfType<ExpressionStatementSyntax>()
-                    .Select(s => s.Expression)
-                    .OfType<AssignmentExpressionSyntax>()
-                    .Where(a => IsPropertyOfVar(a.Left, localName))
-                    .ToList();
-
-                if (nextAssignments.Count >= 2)
-                {
-                    var loc = creation.GetLocation().GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, 1, Id,
-                        $"Prefer object initializer syntax for '{localName}' (dotnet_style_object_initializer = true).",
-                        objSev));
-                }
-            }
+                CheckObjectInitializer(filePath, local, objSev, diagnostics);
         }
 
         return diagnostics;
+    }
+
+    void CheckObjectInitializer(
+        string filePath, LocalDeclarationStatementSyntax local,
+        Severity severity, List<Diagnostic> diagnostics)
+    {
+        var variable = local.Declaration.Variables.FirstOrDefault();
+        if (variable?.Initializer?.Value is not ObjectCreationExpressionSyntax creation) return;
+        if (creation.Initializer != null) return;
+
+        var localName = variable.Identifier.Text;
+        var parent = local.Parent;
+        if (parent == null) return;
+
+        var siblings = parent.ChildNodes().ToList();
+        var idx = siblings.IndexOf(local);
+
+        const int maxLookaheadStatements = 5;
+        var nextAssignments = siblings.Skip(idx + 1)
+            .Take(maxLookaheadStatements)
+            .OfType<ExpressionStatementSyntax>()
+            .Select(s => s.Expression)
+            .OfType<AssignmentExpressionSyntax>()
+            .Count(a => IsPropertyOfVar(a.Left, localName));
+
+        if (nextAssignments >= 2)
+        {
+            var loc = creation.GetLocation().GetLineSpan();
+            diagnostics.Add(StyleHelper.Make(filePath,
+                loc.StartLinePosition.Line + 1, 1, Id,
+                $"Prefer object initializer syntax for '{localName}' (dotnet_style_object_initializer = true).",
+                severity));
+        }
     }
 
     static bool IsPropertyOfVar(ExpressionSyntax expr, string varName) =>
@@ -366,7 +383,7 @@ sealed class NullCheckPreferenceRule : IRule
 
     static bool IsObjectEquals(MemberAccessExpressionSyntax mem)
     {
-        var name     = mem.Name.Identifier.Text;
+        var name = mem.Name.Identifier.Text;
         var receiver = mem.Expression.ToString();
         return (name == "Equals" && receiver is "object" or "Object") || name == "ReferenceEquals";
     }
@@ -394,15 +411,17 @@ sealed class NamespaceMatchFolderRule : IRule
         var diagnostics = new List<Diagnostic>();
         var fileDir = Path.GetDirectoryName(filePath) ?? "";
 
-        foreach (var ns in root.DescendantNodes().OfType<BaseNamespaceDeclarationSyntax>())
+        var dirName = Path.GetFileName(fileDir);
+
+        foreach (var nsNameNode in root.DescendantNodes().OfType<BaseNamespaceDeclarationSyntax>()
+                     .Select(ns => ns.Name))
         {
-            var nsName      = ns.Name.ToString();
+            var nsName = nsNameNode.ToString();
             var lastSegment = nsName.Split('.').Last();
-            var dirName     = Path.GetFileName(fileDir);
 
             if (!string.Equals(lastSegment, dirName, StringComparison.OrdinalIgnoreCase))
             {
-                var loc = ns.Name.GetLocation().GetLineSpan();
+                var loc = nsNameNode.GetLocation().GetLineSpan();
                 diagnostics.Add(StyleHelper.Make(filePath,
                     loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
                     $"Namespace '{nsName}' does not match folder '{dirName}' (dotnet_style_namespace_match_folder = true).",

@@ -20,17 +20,17 @@ sealed class VarStyleRule : IRule
         var root = await tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
-        foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
+        foreach (var decl in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>()
+                     .Select(local => local.Declaration))
         {
-            var decl = local.Declaration;
             var variable = decl.Variables.FirstOrDefault();
             if (variable?.Initializer?.Value == null) continue;
 
             var isVar = decl.Type.IsVar;
-            var init  = variable.Initializer.Value;
-            var span  = decl.Type.GetLocation().GetLineSpan();
-            var line  = span.StartLinePosition.Line + 1;
-            var col   = span.StartLinePosition.Character + 1;
+            var init = variable.Initializer.Value;
+            var span = decl.Type.GetLocation().GetLineSpan();
+            var line = span.StartLinePosition.Line + 1;
+            var col = span.StartLinePosition.Character + 1;
 
             if (!isVar)
                 CheckExplicitType(filePath, decl.Type, init, line, col, config, diagnostics);
@@ -104,7 +104,7 @@ sealed class VarStyleRule : IRule
         init switch
         {
             ObjectCreationExpressionSyntax obj => obj.Type.ToString(),
-            CastExpressionSyntax cast          => cast.Type.ToString(),
-            _                                  => null
+            CastExpressionSyntax cast => cast.Type.ToString(),
+            _ => null
         };
 }

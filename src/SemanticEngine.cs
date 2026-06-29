@@ -48,7 +48,7 @@ class SemanticEngine
 
         try
         {
-            project     = await workspace.OpenProjectAsync(projectPath);
+            project = await workspace.OpenProjectAsync(projectPath);
             compilation = await project.GetCompilationAsync();
         }
         catch (Exception ex)
@@ -60,7 +60,7 @@ class SemanticEngine
 
         if (compilation == null) return [];
 
-        var diagnostics      = new List<Diagnostic>();
+        var diagnostics = new List<Diagnostic>();
         var severityOverrides = BuildSeverityOverrides(project);
 
         foreach (var d in compilation.GetDiagnostics()
@@ -110,7 +110,7 @@ class SemanticEngine
         return diagnostics;
     }
 
-    static IReadOnlyList<Diagnostic> CheckReadonlyFields(
+    internal static List<Diagnostic> CheckReadonlyFields(
         string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
         if (!config.Properties.TryGetValue("dotnet_style_readonly_field", out var val) ||
@@ -126,41 +126,43 @@ class SemanticEngine
             if (!mods.Any(SyntaxKind.PrivateKeyword)) continue;
 
             foreach (var variable in field.Declaration.Variables)
-            {
-                var symbol = model.GetDeclaredSymbol(variable) as IFieldSymbol;
-                if (symbol == null) continue;
-
-                bool writtenInNonCtor = root.DescendantNodes()
-                    .OfType<AssignmentExpressionSyntax>()
-                    .Where(a => SymbolEqualityComparer.Default.Equals(
-                        model.GetSymbolInfo(a.Left).Symbol, symbol))
-                    .Any(a => !a.Ancestors().OfType<ConstructorDeclarationSyntax>().Any());
-
-                if (!writtenInNonCtor)
-                {
-                    var loc = variable.Identifier.GetLocation().GetLineSpan();
-                    diagnostics.Add(new(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1,
-                        "CS033-S",
-                        $"Field '{variable.Identifier.Text}' is only assigned in constructors; declare as 'readonly' (semantic).",
-                        Severity.Warning));
-                }
-            }
+                CheckReadonlyVariable(filePath, root, model, variable, diagnostics);
         }
 
         return diagnostics;
     }
 
-    static IReadOnlyList<Diagnostic> CheckVarStyle(
+    static void CheckReadonlyVariable(
+        string filePath, SyntaxNode root, SemanticModel model,
+        VariableDeclaratorSyntax variable, List<Diagnostic> diagnostics)
+    {
+        if (model.GetDeclaredSymbol(variable) is not IFieldSymbol symbol) return;
+
+        bool writtenInNonCtor = root.DescendantNodes()
+            .OfType<AssignmentExpressionSyntax>()
+            .Where(a => SymbolEqualityComparer.Default.Equals(
+                model.GetSymbolInfo(a.Left).Symbol, symbol))
+            .Any(a => !a.Ancestors().OfType<ConstructorDeclarationSyntax>().Any());
+        if (writtenInNonCtor) return;
+
+        var loc = variable.Identifier.GetLocation().GetLineSpan();
+        diagnostics.Add(new(filePath,
+            loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1,
+            "CS033-S",
+            $"Field '{variable.Identifier.Text}' is only assigned in constructors; declare as 'readonly' (semantic).",
+            Severity.Warning));
+    }
+
+    internal static List<Diagnostic> CheckVarStyle(
         string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
-        var diagnostics    = new List<Diagnostic>();
-        var varForBuiltin  = config.Properties.TryGetValue("csharp_style_var_for_built_in_types",  out var vfb) && vfb.Contains("true");
+        var diagnostics = new List<Diagnostic>();
+        var varForBuiltin = config.Properties.TryGetValue("csharp_style_var_for_built_in_types", out var vfb) && vfb.Contains("true");
         var varWhenApparent = config.Properties.TryGetValue("csharp_style_var_when_type_is_apparent", out var vwa) && vwa.Contains("true");
 
-        foreach (var local in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>())
+        foreach (var decl in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>()
+                     .Select(local => local.Declaration))
         {
-            var decl = local.Declaration;
             if (decl.Type.IsVar || decl.Variables.Count != 1) continue;
             var variable = decl.Variables[0];
             if (variable.Initializer == null) continue;
@@ -168,7 +170,7 @@ class SemanticEngine
             var typeInfo = model.GetTypeInfo(decl.Type);
             if (typeInfo.Type == null) continue;
 
-            var isBuiltin  = typeInfo.Type.SpecialType != SpecialType.None;
+            var isBuiltin = typeInfo.Type.SpecialType != SpecialType.None;
             var isApparent = IsTypeApparentFromInit(variable.Initializer.Value, model);
 
             if (varForBuiltin && isBuiltin)
@@ -207,10 +209,10 @@ class SemanticEngine
     {
         var overrides = new Dictionary<string, Severity?>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var document in project.Documents)
+        foreach (var filePath in project.Documents
+                     .Where(d => d.FilePath != null).Select(d => d.FilePath!))
         {
-            if (document.FilePath == null) continue;
-            var config = _loader.GetConfig(document.FilePath);
+            var config = _loader.GetConfig(filePath);
 
             foreach (var (key, value) in config.Properties)
             {
@@ -222,10 +224,10 @@ class SemanticEngine
 
                 overrides[parts[1].ToUpperInvariant()] = value.ToLowerInvariant() switch
                 {
-                    "error"            => (Severity?)Severity.Error,
-                    "warning"          => Severity.Warning,
+                    "error" => (Severity?)Severity.Error,
+                    "warning" => Severity.Warning,
                     "none" or "silent" => null,
-                    _                  => Severity.Warning
+                    _ => Severity.Warning
                 };
             }
         }
@@ -233,16 +235,16 @@ class SemanticEngine
         return overrides;
     }
 
-    static Severity? GetEffectiveSeverity(
+    internal static Severity? GetEffectiveSeverity(
         Microsoft.CodeAnalysis.Diagnostic d,
         Dictionary<string, Severity?> overrides)
     {
         if (overrides.TryGetValue(d.Id, out var overridden)) return overridden;
         return d.Severity switch
         {
-            DiagnosticSeverity.Error   => Severity.Error,
+            DiagnosticSeverity.Error => Severity.Error,
             DiagnosticSeverity.Warning => Severity.Warning,
-            _                          => null
+            _ => null
         };
     }
 }

@@ -10,8 +10,8 @@ namespace CsLint.Rules.Opinionated;
 // removed in v4.0.0 and are now owned by the `codemetrics` tool, which measures them more
 // rigorously. Keep this file metric-free.
 record ScanConfig(
-    bool FlagMagicNumbers           = true,
-    bool FlagBooleanParameters      = true,
+    bool FlagMagicNumbers = true,
+    bool FlagBooleanParameters = true,
     bool FlagMissingCancellationToken = true);
 
 sealed class MagicNumberRule : IRule
@@ -21,12 +21,12 @@ sealed class MagicNumberRule : IRule
 
     public string Id => "OP004";
     public RuleCategory Category => RuleCategory.Opinionated;
-    public bool AppliesTo(FileConfig _) => _config.FlagMagicNumbers;
+    public bool AppliesTo(FileConfig config) => _config.FlagMagicNumbers;
 
     static readonly HashSet<string> AllowedValues = new(StringComparer.Ordinal)
         { "0", "1", "-1", "2", "100", "1000" };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -68,9 +68,9 @@ sealed class BooleanParameterRule : IRule
 
     public string Id => "OP005";
     public RuleCategory Category => RuleCategory.Opinionated;
-    public bool AppliesTo(FileConfig _) => _config.FlagBooleanParameters;
+    public bool AppliesTo(FileConfig config) => _config.FlagBooleanParameters;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -109,9 +109,9 @@ sealed class MissingCancellationTokenRule : IRule
 
     public string Id => "OP006";
     public RuleCategory Category => RuleCategory.Opinionated;
-    public bool AppliesTo(FileConfig _) => _config.FlagMissingCancellationToken;
+    public bool AppliesTo(FileConfig config) => _config.FlagMissingCancellationToken;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig _)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
