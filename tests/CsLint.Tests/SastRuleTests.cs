@@ -29,6 +29,32 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST001"));
     }
 
+    // Regression: a typed catch, an exception filter, or a documented (commented) catch is a
+    // deliberate scoped decision — not the silent catch-all this rule targets.
+    [Fact]
+    public async Task SAST001_ignores_typed_empty_catch()
+    {
+        var diags = await T.Run(new EmptyCatchRule(),
+            "class C { void M() { try { } catch (System.FormatException) { } } }");
+        Assert.False(diags.Has("SAST001"));
+    }
+
+    [Fact]
+    public async Task SAST001_ignores_filtered_empty_catch()
+    {
+        var diags = await T.Run(new EmptyCatchRule(),
+            "class C { void M() { try { } catch (System.Exception e) when (e.Message.Length > 0) { } } }");
+        Assert.False(diags.Has("SAST001"));
+    }
+
+    [Fact]
+    public async Task SAST001_ignores_commented_catch_all()
+    {
+        var diags = await T.Run(new EmptyCatchRule(),
+            "class C { void M() { try { } catch { /* best-effort; documented intent */ } } }");
+        Assert.False(diags.Has("SAST001"));
+    }
+
     [Fact]
     public async Task SAST002_flags_console_writeline()
     {
@@ -90,6 +116,20 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST004"));
     }
 
+    // Regression: token/key-named constants commonly hold non-credentials — a permission
+    // scope, a numeric default, or a scheme identifier. None of these are secrets.
+    [Theory]
+    [InlineData("public const string ManageOwnTokens = \"tokens:manage_own\";")]   // scope
+    [InlineData("public const string MaxActiveTokensPerTenant = \"1000\";")]        // numeric
+    [InlineData("internal const string ApiTokenScheme = \"ApiToken\";")]            // scheme id
+    [InlineData("internal const string NuGetApiKeyScheme = \"NuGetApiKey\";")]      // scheme id
+    [InlineData("public const string TypeTokenCreate = \"tenant.token.create\";")]  // event type
+    public async Task SAST004_does_not_flag_non_secret_constants(string member)
+    {
+        var diags = await T.Run(new HardcodedSecretRule(), $"class C {{ {member} }}");
+        Assert.False(diags.Has("SAST004"));
+    }
+
     [Fact]
     public async Task SAST005_flags_fire_and_forget()
     {
@@ -119,6 +159,17 @@ public class SastRuleTests
     {
         var diags = await T.Run(new PragmaDisableRule(),
             "#pragma warning disable CS0168 // intentionally unused during migration\nclass C { }\n");
+        Assert.False(diags.Has("SAST006"));
+    }
+
+    // Regression: a justification comment on the line directly above the pragma counts too —
+    // that is the common convention, not just a trailing same-line comment.
+    [Fact]
+    public async Task SAST006_clean_with_preceding_comment()
+    {
+        var diags = await T.Run(new PragmaDisableRule(),
+            "// taint is a false positive here; the input never reaches the path\n"
+            + "#pragma warning disable SCS0018\nclass C { }\n");
         Assert.False(diags.Has("SAST006"));
     }
 

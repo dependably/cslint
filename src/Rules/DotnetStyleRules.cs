@@ -163,6 +163,7 @@ sealed class AccessibilityModifiersRule : IRule
             var modifiers = GetModifiers(member);
             if (modifiers == null) continue;
             if (HasAccessModifier(modifiers.Value)) continue;
+            if (CannotHaveAccessModifier(member, modifiers.Value)) continue;
             if (setting == "for_non_interface_members" && IsInInterface(member)) continue;
 
             var loc = member.GetLocation().GetLineSpan();
@@ -189,6 +190,19 @@ sealed class AccessibilityModifiersRule : IRule
     static bool HasAccessModifier(SyntaxTokenList mods) => mods.Any(m =>
         m.IsKind(SyntaxKind.PublicKeyword) || m.IsKind(SyntaxKind.PrivateKeyword) ||
         m.IsKind(SyntaxKind.ProtectedKeyword) || m.IsKind(SyntaxKind.InternalKeyword));
+
+    // Members for which an access modifier is illegal — flagging them is a false positive.
+    // Static constructors take no modifier; explicit interface implementations are implicitly
+    // public and cannot carry one. (Operators/destructors never reach here — GetModifiers
+    // returns null for them.)
+    static bool CannotHaveAccessModifier(MemberDeclarationSyntax member, SyntaxTokenList mods) => member switch
+    {
+        ConstructorDeclarationSyntax => mods.Any(SyntaxKind.StaticKeyword),
+        MethodDeclarationSyntax m => m.ExplicitInterfaceSpecifier != null,
+        PropertyDeclarationSyntax p => p.ExplicitInterfaceSpecifier != null,
+        EventDeclarationSyntax e => e.ExplicitInterfaceSpecifier != null,
+        _ => false,
+    };
 
     static bool IsInInterface(SyntaxNode node) =>
         node.Ancestors().OfType<InterfaceDeclarationSyntax>().Any();
@@ -248,6 +262,15 @@ sealed class ReadonlyFieldRule : IRule
             .Any(a => IsAssignmentToField(a, fieldName) && !IsInsideConstructor(a));
         if (writtenInNonCtor) return;
 
+        // Passing the field by ref/out (e.g. Interlocked.Add(ref _f, …)) mutates it and makes
+        // 'readonly' illegal — a readonly field can't be passed by ref outside a constructor.
+        var passedByRefInNonCtor = containingType.DescendantNodes()
+            .OfType<ArgumentSyntax>()
+            .Any(arg => !arg.RefOrOutKeyword.IsKind(SyntaxKind.None)
+                && IsReferenceToField(arg.Expression, fieldName)
+                && !IsInsideConstructor(arg));
+        if (passedByRefInNonCtor) return;
+
         var writtenOutsideDecl = containingType.DescendantNodes()
             .OfType<AssignmentExpressionSyntax>()
             .Any(a => IsAssignmentToField(a, fieldName));
@@ -270,8 +293,11 @@ sealed class ReadonlyFieldRule : IRule
     }
 
     static bool IsAssignmentToField(AssignmentExpressionSyntax a, string name) =>
-        a.Left is IdentifierNameSyntax id && id.Identifier.Text == name ||
-        a.Left is MemberAccessExpressionSyntax mem &&
+        IsReferenceToField(a.Left, name);
+
+    static bool IsReferenceToField(ExpressionSyntax expr, string name) =>
+        expr is IdentifierNameSyntax id && id.Identifier.Text == name ||
+        expr is MemberAccessExpressionSyntax mem &&
         mem.Expression is ThisExpressionSyntax &&
         mem.Name.Identifier.Text == name;
 

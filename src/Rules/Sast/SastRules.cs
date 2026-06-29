@@ -21,11 +21,18 @@ sealed class EmptyCatchRule : IRule
         {
             if (clause.Block.Statements.Count == 0)
             {
-                var loc = clause.CatchKeyword.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath,
-                    loc.StartLinePosition.Line + 1, 1, Id,
-                    "Empty catch block silently swallows exceptions.",
-                    Severity.Error));
+                // Only a bare, unexplained catch-all is a silent swallow. A *typed* catch or an
+                // exception *filter* (`when`) is a deliberate, scoped decision, and a comment in
+                // the body documents the rationale — none of those are the bug this rule targets.
+                bool isBareCatchAll = clause.Declaration == null && clause.Filter == null;
+                if (isBareCatchAll && !HasComment(clause.Block))
+                {
+                    var loc = clause.CatchKeyword.GetLocation().GetLineSpan();
+                    diagnostics.Add(new(filePath,
+                        loc.StartLinePosition.Line + 1, 1, Id,
+                        "Empty catch block silently swallows exceptions.",
+                        Severity.Error));
+                }
             }
             else if (IsOnlyDiscard(clause))
             {
@@ -38,6 +45,16 @@ sealed class EmptyCatchRule : IRule
         }
 
         return diagnostics;
+    }
+
+    // True if the block carries any comment (between its braces) documenting intent.
+    static bool HasComment(BlockSyntax block)
+    {
+        static bool IsComment(SyntaxTrivia t) =>
+            t.IsKind(SyntaxKind.SingleLineCommentTrivia) || t.IsKind(SyntaxKind.MultiLineCommentTrivia);
+        return block.OpenBraceToken.TrailingTrivia.Any(IsComment)
+            || block.CloseBraceToken.LeadingTrivia.Any(IsComment)
+            || block.DescendantTrivia().Any(IsComment);
     }
 
     static bool IsOnlyDiscard(CatchClauseSyntax clause)
@@ -197,7 +214,8 @@ sealed class HardcodedSecretRule : IRule
         var value = lit.Token.ValueText;
         var loc = assignment.GetLocation().GetLineSpan();
 
-        if (SecretKeywords.Any(kw => lhsName.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
+        if (SecretKeywords.Any(kw => lhsName.Contains(kw)) && value.Length > 0 && !IsEmpty(value)
+            && !IsLikelyNonSecretValue(value))
         {
             diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
                 $"Possible hardcoded credential in '{GetAssigneeName(assignment.Left)}'.", Severity.Error));
@@ -217,7 +235,8 @@ sealed class HardcodedSecretRule : IRule
         var name = init.Identifier.Text.ToLowerInvariant();
         var value = lit.Token.ValueText;
 
-        if (SecretKeywords.Any(kw => name.Contains(kw)) && value.Length > 0 && !IsEmpty(value))
+        if (SecretKeywords.Any(kw => name.Contains(kw)) && value.Length > 0 && !IsEmpty(value)
+            && !IsLikelyNonSecretValue(value))
         {
             var loc = init.GetLocation().GetLineSpan();
             diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
@@ -226,6 +245,24 @@ sealed class HardcodedSecretRule : IRule
     }
 
     static bool IsEmpty(string v) => v.Replace("*", "").Replace(" ", "").Length == 0;
+
+    // Filters out values that a token/key/secret-named constant commonly holds but which are
+    // plainly not credentials: numeric defaults ("1000"), permission scopes / URIs / paths
+    // ("tokens:manage_own"), and plain identifier words used as scheme names ("ApiToken").
+    // A real secret carries entropy — digits mixed with symbols, base64/hex — and survives this.
+    static bool IsLikelyNonSecretValue(string value)
+    {
+        var v = value.Trim();
+        if (v.Length == 0) return true;
+        if (v.All(c => char.IsDigit(c) || c is '.' or '-' or '_')) return true;     // numeric / versiony
+        if (v.Contains(':') || v.Contains('/') || v.Contains(' ')) return true;     // scope / URI / path
+        // A lowercase dotted identifier — reverse-DNS event types / config keys ("tenant.token.create").
+        if (v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_'))
+            return true;
+        // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
+        if (v.Length <= 40 && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
+        return false;
+    }
 
     static string? GetAssigneeName(ExpressionSyntax expr) => expr switch
     {
@@ -318,7 +355,7 @@ sealed class PragmaDisableRule : IRule
 
             var lineNum = trivia.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
 
-            if (!HasTrailingComment(source, lineNum))
+            if (!HasJustification(source, lineNum))
             {
                 diagnostics.Add(new(filePath, lineNum, 1, Id,
                     "#pragma warning disable without a justification comment explaining why the suppression is necessary.",
@@ -329,11 +366,30 @@ sealed class PragmaDisableRule : IRule
         return diagnostics;
     }
 
-    static bool HasTrailingComment(string source, int lineNum)
+    // A justification may sit on the same line as the pragma OR on the line(s) directly above it
+    // — both are common conventions. Only the same-line case enforces a minimum length; a
+    // dedicated comment line above the pragma is taken as deliberate documentation.
+    static bool HasJustification(string source, int lineNum)
     {
         var lines = source.Split('\n');
-        if (lineNum - 1 >= lines.Length) return false;
-        var line = lines[lineNum - 1];
+        if (lineNum < 1 || lineNum - 1 >= lines.Length) return false;
+
+        if (HasTrailingComment(lines[lineNum - 1])) return true;
+
+        for (int i = lineNum - 2; i >= 0; i--)
+        {
+            var prev = lines[i].Trim();
+            if (prev.Length == 0) continue; // skip blank lines between the comment and the pragma
+            return prev.StartsWith("//", StringComparison.Ordinal)
+                || prev.StartsWith("/*", StringComparison.Ordinal)
+                || prev.StartsWith("*", StringComparison.Ordinal)   // middle/last line of a block comment
+                || prev.EndsWith("*/", StringComparison.Ordinal);
+        }
+        return false;
+    }
+
+    static bool HasTrailingComment(string line)
+    {
         var commentIdx = line.IndexOf("//", StringComparison.Ordinal);
         if (commentIdx < 0) return false;
         const int minJustificationLength = 5;
