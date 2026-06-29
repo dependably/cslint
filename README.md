@@ -86,6 +86,8 @@ jobs:
       - run: cslint --deep --project src/MyApp.csproj --strict --format github
 ```
 
+> The `dotnet tool install --global Dependably.CsLint` steps above assume the package is published to nuget.org. Until then, install from source instead (`dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint`). `setup-dotnet` can pin `8.x` or `10.x` — the tool ships for both.
+
 The `--format github` flag emits `::error file=...` and `::warning file=...` annotations that appear as inline PR comments.
 
 ---

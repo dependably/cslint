@@ -79,7 +79,7 @@ sealed class ConsoleOutputRule : IRule
 
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
-        if (IsTestFile(filePath)) return [];
+        if (TestFileHeuristic.IsTestFile(filePath)) return [];
 
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
@@ -111,7 +111,16 @@ sealed class ConsoleOutputRule : IRule
         return diagnostics;
     }
 
-    static bool IsTestFile(string path)
+}
+
+/// <summary>
+/// Shared "is this a test file?" heuristic. Test fixtures legitimately contain console output
+/// (SAST002) and credential-shaped literals (SAST004), so those rules skip them rather than
+/// drown real code in noise.
+/// </summary>
+static class TestFileHeuristic
+{
+    internal static bool IsTestFile(string path)
     {
         var name = Path.GetFileNameWithoutExtension(path);
         return name.EndsWith("Test", StringComparison.OrdinalIgnoreCase) ||
@@ -189,6 +198,10 @@ sealed class HardcodedSecretRule : IRule
 
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
     {
+        // Test fixtures legitimately embed credential-shaped literals (fake connection strings,
+        // tokens, api-keys); skip them like SAST002 does, to avoid error-level noise on test code.
+        if (TestFileHeuristic.IsTestFile(filePath)) return [];
+
         var source = await File.ReadAllTextAsync(filePath);
         var tree = CSharpSyntaxTree.ParseText(source);
         var root = await tree.GetRootAsync();
