@@ -38,7 +38,8 @@ sealed class MagicNumberRule : IRule
             if (!literal.IsKind(SyntaxKind.NumericLiteralExpression)) continue;
             var text = literal.Token.Text;
             if (AllowedValues.Contains(text)) continue;
-            if (IsInConstDeclaration(literal) || IsInAttributeArgument(literal) || IsInEnumMember(literal)) continue;
+            if (IsInConstDeclaration(literal) || IsInAttributeArgument(literal) || IsInEnumMember(literal)
+                || IsInMemberInitializer(literal)) continue;
 
             var loc = literal.GetLocation().GetLineSpan();
             diagnostics.Add(new(filePath,
@@ -59,6 +60,29 @@ sealed class MagicNumberRule : IRule
 
     static bool IsInEnumMember(SyntaxNode node) =>
         node.Ancestors().OfType<EnumMemberDeclarationSyntax>().Any();
+
+    // A literal that is the default value of a named member (field/property/parameter) is already
+    // named by that member — e.g. `TokenCacheDuration { get; set; } = TimeSpan.FromMinutes(55)`.
+    // Extracting it to a separate constant adds nothing, so it isn't a "magic number". The walk
+    // stops at the first statement/body boundary so literals in method bodies still count.
+    static bool IsInMemberInitializer(SyntaxNode node)
+    {
+        foreach (var ancestor in node.Ancestors())
+        {
+            switch (ancestor)
+            {
+                case PropertyDeclarationSyntax:
+                case FieldDeclarationSyntax:
+                case ParameterSyntax:
+                    return true;
+                case StatementSyntax:
+                case ArrowExpressionClauseSyntax:
+                case AccessorDeclarationSyntax:
+                    return false;
+            }
+        }
+        return false;
+    }
 }
 
 sealed class BooleanParameterRule : IRule
@@ -80,6 +104,12 @@ sealed class BooleanParameterRule : IRule
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
             if (method.Modifiers.Any(SyntaxKind.PrivateKeyword)) continue;
+
+            // An overridden or explicitly-implemented method did not choose its own signature —
+            // the bool parameter was decided by the base type / interface (e.g. the canonical
+            // `protected override void Dispose(bool disposing)`), so it isn't a flag-arg smell.
+            if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)) continue;
+            if (method.ExplicitInterfaceSpecifier != null) continue;
 
             foreach (var param in method.ParameterList.Parameters)
             {
@@ -122,6 +152,7 @@ sealed class MissingCancellationTokenRule : IRule
         {
             if (!method.Modifiers.Any(SyntaxKind.AsyncKeyword)) continue;
             if (!IsPublicOrInternal(method)) continue;
+            if (SignatureIsFrameworkConstrained(method) || HasAmbientCancellation(method)) continue;
 
             var returnType = method.ReturnType.ToString();
             if (!returnType.Contains("Task") && !returnType.Contains("ValueTask")) continue;
@@ -145,4 +176,26 @@ sealed class MissingCancellationTokenRule : IRule
     static bool IsPublicOrInternal(MethodDeclarationSyntax method) =>
         method.Modifiers.Any(SyntaxKind.PublicKeyword) ||
         method.Modifiers.Any(SyntaxKind.InternalKeyword);
+
+    // The author can't add a CancellationToken parameter to a signature they don't own: an
+    // override or explicit interface implementation, or a contract that takes no parameters
+    // (IAsyncDisposable.DisposeAsync, an async iterator's MoveNextAsync).
+    static bool SignatureIsFrameworkConstrained(MethodDeclarationSyntax method) =>
+        method.Modifiers.Any(SyntaxKind.OverrideKeyword)
+        || method.ExplicitInterfaceSpecifier != null
+        || method.Identifier.Text is "DisposeAsync" or "MoveNextAsync";
+
+    // A method already handed a context that exposes a cancellation token (HttpContext via
+    // RequestAborted, an ASP.NET filter context via HttpContext.RequestAborted) doesn't need a
+    // separate CancellationToken parameter — e.g. middleware InvokeAsync(HttpContext).
+    static bool HasAmbientCancellation(MethodDeclarationSyntax method) =>
+        method.ParameterList.Parameters.Any(p =>
+        {
+            var t = p.Type?.ToString() ?? "";
+            return t.Contains("HttpContext")
+                || t.EndsWith("FilterContext", StringComparison.Ordinal)
+                || t.EndsWith("ExecutingContext", StringComparison.Ordinal)
+                || t.EndsWith("ExecutedContext", StringComparison.Ordinal)
+                || t.EndsWith("ExceptionContext", StringComparison.Ordinal);
+        });
 }
