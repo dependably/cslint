@@ -36,8 +36,11 @@ public class CliTests
     [Fact]
     public void ParseOptions_format_value()
     {
+        Assert.Equal(OutputFormat.Human, Cli.ParseOptions(["--format", "human"]).Format);
         Assert.Equal(OutputFormat.Json, Cli.ParseOptions(["--format", "json"]).Format);
         Assert.Equal(OutputFormat.GitHub, Cli.ParseOptions(["-f", "github"]).Format);
+        // human is also the default when no --format is given.
+        Assert.Equal(OutputFormat.Human, Cli.ParseOptions([]).Format);
     }
 
     [Fact]

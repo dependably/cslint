@@ -54,7 +54,7 @@ Rules are instantiated once in `LintEngine` and reused across files. `AppliesTo(
 | `src/LintEngine.cs` | Rule registry, parallel execution, mode routing |
 | `src/EditorConfigLoader.cs` | Walks directory tree, parses `.editorconfig`, glob matching with `{}` brace expansion, caches results |
 | `src/SemanticEngine.cs` | MSBuildWorkspace integration, applies `dotnet_diagnostic.*` severity overrides from `.editorconfig` |
-| `src/Reporting.cs` | Text/JSON/GitHub output formatting |
+| `src/Reporting.cs` | Human/JSON/GitHub output formatting. JSON is the shared Dependably finding schema v1 envelope (`tool`/`toolVersion`/`schemaVersion`/`target`/`summary`/`findings`); severity uses the suite ladder (error→high, warning→low). |
 | `src/Rules/IRule.cs` | `IRule` interface, `TextRule`/`SyntaxRule` base classes, `Diagnostic` record |
 | `src/Rules/StyleHelper.cs` | Parses `value:severity` format, handles suppression |
 | `src/Rules/Sast/SastRules.cs` | SAST001–SAST008 (security checks via syntax tree) |

@@ -112,24 +112,26 @@ static class Cli
     static int ReportAndExit(
         IReadOnlyList<Diagnostic> allDiagnostics, CliOptions options, Summary summary, LintMode mode)
     {
-        Reporter.Write(allDiagnostics, options.Format, options.Root);
-
         var totalFiles = summary.FilesChecked;
         var errors = allDiagnostics.Count(d => d.Severity == Severity.Error);
         var warnings = allDiagnostics.Count(d => d.Severity == Severity.Warning);
 
+        // Compute the real exit code up front so the JSON envelope's summary.exitCode can carry
+        // the exact value the process will return (1 on errors, or on warnings under --strict).
+        var exitCode = errors > 0 || (options.Strict && warnings > 0) ? 1 : 0;
+
+        Reporter.Write(allDiagnostics, options.Format, options.Root, totalFiles, exitCode, Version());
+
         // The human summary line must not land on stdout for machine formats, or it corrupts
         // the JSON document / GitHub-annotation stream. Send it to stderr there instead.
-        var summaryWriter = options.Format == OutputFormat.Text ? Console.Out : Console.Error;
+        var summaryWriter = options.Format == OutputFormat.Human ? Console.Out : Console.Error;
         summaryWriter.WriteLine($"Checked {totalFiles} file{(totalFiles != 1 ? "s" : "")}. " +
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode ? " + semantic" : "") + ".");
 
-        if (errors == 0 && !(options.Strict && warnings > 0)) return 0;
-
         if (options.Strict && warnings > 0 && errors == 0)
         {
-            if (options.Format == OutputFormat.Text)
+            if (options.Format == OutputFormat.Human)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("--strict: warnings treated as errors.");
@@ -141,7 +143,7 @@ static class Cli
             }
         }
 
-        return 1;
+        return exitCode;
     }
 
     public static LintMode DetermineMode(CliOptions opts)
@@ -300,7 +302,7 @@ static class Cli
                 echo "error: .editorconfig is staged. Review config changes before committing." >&2
                 exit 1
             fi
-            cslint --sast --strict --format text
+            cslint --sast --strict --format human
             exit $?
             """);
 
@@ -445,7 +447,7 @@ static class Cli
                             Run after dotnet build. Enables dotnet_diagnostic.CSXXXX.severity.
 
             OUTPUT
-              --format, -f  text (default) | json | github
+              --format, -f  human (default) | json | github
               --strict, -s  Treat warnings as errors (exit 1)
               --fix         Auto-fix EditorConfig violations where possible
               --explain <f> Show which rules apply to a file and why
@@ -501,7 +503,7 @@ sealed class CliOptions
     public bool DeepMode { get; set; }
     public string? ExplainFile { get; set; }
     public string? ProjectPath { get; set; }
-    public OutputFormat Format { get; set; } = OutputFormat.Text;
+    public OutputFormat Format { get; set; } = OutputFormat.Human;
     public string Root { get; set; } = Directory.GetCurrentDirectory();
     public string? ConfigPath { get; set; }
     public List<string> Files { get; set; } = [];
