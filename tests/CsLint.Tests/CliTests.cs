@@ -59,6 +59,24 @@ public class CliTests
     }
 
     [Fact]
+    public void ParseOptions_unknown_flag_is_a_usage_error()
+    {
+        // A bogus or typo'd flag must be rejected, not silently ignored (which would exit 0 and
+        // quietly disable the intended behavior, e.g. a mistyped --strict).
+        Assert.Equal("--bogus", Cli.ParseOptions(["--bogus"]).UnknownOption);
+        Assert.Equal("--stict", Cli.ParseOptions(["--stict"]).UnknownOption); // typo'd --strict
+
+        // Valid flags, valued-flag values, and positional paths are not treated as unknown.
+        var ok = Cli.ParseOptions(["--strict", "--format", "json", "Foo.cs"]);
+        Assert.Null(ok.UnknownOption);
+        Assert.True(ok.Strict);
+        Assert.Single(ok.Files);
+
+        // The reported unknown option is the first one encountered.
+        Assert.Equal("--bogus", Cli.ParseOptions(["--bogus", "--alsobad"]).UnknownOption);
+    }
+
+    [Fact]
     public void ParseOptions_help_and_install_hook()
     {
         Assert.True(Cli.ParseOptions(["-h"]).ShowHelp);
