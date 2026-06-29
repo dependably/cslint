@@ -122,6 +122,19 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST004"));
     }
 
+    // Regression: test fixtures legitimately embed credential-shaped literals; skip them like SAST002.
+    [Fact]
+    public async Task SAST004_ignores_test_files()
+    {
+        var path = T.WriteCs("class C { void M() { string apiKey = \"sk_live_abc123\"; } }", "_Tests.cs");
+        try
+        {
+            var diags = await new HardcodedSecretRule().AnalyzeAsync(path, T.Cfg());
+            Assert.False(diags.Has("SAST004"));
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public async Task SAST004_flags_secret_assignment()
     {
