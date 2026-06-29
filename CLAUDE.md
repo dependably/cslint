@@ -13,8 +13,8 @@ dotnet build -c Release
 dotnet test tests/CsLint.Tests/CsLint.Tests.csproj
 dotnet test tests/CsLint.Tests/CsLint.Tests.csproj --collect:"XPlat Code Coverage"
 
-# Integration tests (requires cslint installed globally first)
-dotnet tool install --global Dependably.CsLint
+# Integration tests (requires the packed cslint installed globally first)
+dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint
 bash tests/RunTests.sh
 
 # Run a single fixture test manually

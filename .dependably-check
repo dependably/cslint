@@ -1,7 +1,4 @@
 {
-  "common": {
-    "allowedRegistryHosts": ["dependably.northwardlabs.ca"]
-  },
   "cslint": {
     "exclude": ["tests/fixtures/**", "tests/**"]
   }
