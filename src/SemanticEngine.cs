@@ -105,6 +105,7 @@ class SemanticEngine
             var config = _loader.GetConfig(document.FilePath);
             diagnostics.AddRange(CheckReadonlyFields(document.FilePath, root, semanticModel, config));
             diagnostics.AddRange(CheckVarStyle(document.FilePath, root, semanticModel, config));
+            diagnostics.AddRange(CheckUnusedUsings(document.FilePath, semanticModel, config));
         }
 
         return diagnostics;
@@ -191,6 +192,40 @@ class SemanticEngine
                     $"Use 'var': type '{typeInfo.Type.ToDisplayString()}' is apparent from the initializer (semantic).",
                     Severity.Warning));
             }
+        }
+
+        return diagnostics;
+    }
+
+    // IDE0005: Unnecessary using directive.
+    // Enabled when dotnet_diagnostic.IDE0005.severity is set to anything other than none/silent
+    // in .editorconfig — the standard .NET mechanism for enabling this check.
+    // CS8019 is emitted by the Roslyn compiler at Hidden severity (filtered out by
+    // AnalyzeProjectAsync); we surface it explicitly here so the severity gate applies.
+    internal static List<Diagnostic> CheckUnusedUsings(
+        string filePath, SemanticModel model, FileConfig config)
+    {
+        if (!config.Properties.TryGetValue("dotnet_diagnostic.IDE0005.severity", out var raw))
+            return [];
+
+        var level = raw.Trim().ToLowerInvariant();
+        if (level is "none" or "silent") return [];
+
+        var severity = level == "error" ? Severity.Error : Severity.Warning;
+        var diagnostics = new List<Diagnostic>();
+
+        foreach (var d in model.GetDiagnostics()
+            .Where(d => d.Id == "CS8019" && d.Location.IsInSource))
+        {
+            var loc = d.Location.GetLineSpan();
+            if (!loc.IsValid) continue;
+
+            diagnostics.Add(new(filePath,
+                loc.StartLinePosition.Line + 1,
+                loc.StartLinePosition.Character + 1,
+                "IDE0005",
+                "Unnecessary using directive.",
+                severity));
         }
 
         return diagnostics;

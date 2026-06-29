@@ -90,4 +90,88 @@ public class SemanticEngineTests
         var ok = CsLint.SemanticEngine.TryRegisterMsBuild(out var error);
         Assert.True(ok || error != null);
     }
+
+    // ── CheckUnusedUsings ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void CheckUnusedUsings_flags_unused_using()
+    {
+        // System.Text is a valid namespace in the runtime, but no types from it are used here.
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
+        Assert.Contains(diags, d => d.Rule == "IDE0005");
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_clean_when_no_usings()
+    {
+        var (_, model) = Compile("class C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_disabled_when_no_key()
+    {
+        // Gate: key absent → rule is silent regardless of code content.
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings("C.cs", model, T.Cfg());
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_suppressed_by_none()
+    {
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "none")));
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_suppressed_by_silent()
+    {
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "silent")));
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_error_severity_when_configured()
+    {
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "error")));
+        Assert.Contains(diags, d => d.Rule == "IDE0005" && d.Severity == Severity.Error);
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_warning_severity_by_default()
+    {
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
+        Assert.All(diags.Where(d => d.Rule == "IDE0005"),
+            d => Assert.Equal(Severity.Warning, d.Severity));
+    }
+
+    [Fact]
+    public void CheckUnusedUsings_reports_correct_line()
+    {
+        // The using is on line 1 (1-based). Check line reported is 1.
+        var (_, model) = Compile("using System.Text;\nclass C { }");
+        var diags = CsLint.SemanticEngine.CheckUnusedUsings(
+            "C.cs", model,
+            T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
+        Assert.Contains(diags, d => d.Rule == "IDE0005" && d.Line == 1);
+    }
 }

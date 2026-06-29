@@ -366,6 +366,7 @@ static class Cli
               FMT           Roslyn formatter (csharp_space_*, csharp_indent_*, csharp_new_line_*)
               CS010-CS040   C# and .NET style rules
               CS010-S, CS033-S  Semantic variants (--deep only)
+              IDE0005       Unused using directives (--deep only)
               SAST001-008   Security and safety checks
               OP004-006     Opinionated pattern checks: magic numbers, flag args, CancellationToken (--scan)
             """);
