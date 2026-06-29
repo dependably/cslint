@@ -90,6 +90,46 @@ jobs:
 
 The `--format github` flag emits `::error file=...` and `::warning file=...` annotations that appear as inline PR comments.
 
+## Output formats (`--format`)
+
+| Token | Use |
+| --- | --- |
+| `human` (default) | Readable, category-grouped console report. Per-finding severity uses the shared suite ladder vocabulary (`error` → **high**, `warning` → **low**). |
+| `json` | The shared Dependably finding schema (v1) — one valid JSON object on stdout (status goes to stderr), parsed identically across all five Dependably tools. |
+| `github` | GitHub Actions `::error`/`::warning` workflow annotations for inline PR comments. |
+
+The `json` envelope:
+
+```json
+{
+  "tool": "cslint",
+  "toolVersion": "4.1.0",
+  "schemaVersion": "1.0",
+  "target": "/path/scanned",
+  "summary": {
+    "scanned": 1,
+    "findings": 2,
+    "bySeverity": { "critical": 0, "high": 1, "moderate": 0, "low": 1, "info": 0 },
+    "exitCode": 1
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "ruleId": "SAST001",
+      "category": "sast",
+      "message": "Empty catch block silently swallows exceptions.",
+      "location": { "file": "A.cs", "line": 2, "column": 1 },
+      "remediation": null
+    }
+  ]
+}
+```
+
+`severity` is always one of the ladder strings `critical | high | moderate | low | info`. cslint
+emits `high` (its `error`s) and `low` (its `warning`s). `category` is one of `sast` (SAST\*),
+`editorconfig` (EC\*), `lint` (CS\*/FMT/IDE\*), or `opinionated` (OP\*). `summary.findings` always
+equals `findings.length` (never truncated) and `summary.exitCode` equals the process exit code.
+
 ---
 
 ## Pre-commit hook
