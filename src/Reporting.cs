@@ -146,17 +146,22 @@ static class Reporter
         }
     }
 
+    // Category ordinals: drive both grouping order and the section labels.
+    const int CategoryEditorConfig = 0;
+    const int CategorySast = 1;
+    const int CategoryScan = 2;
+
     static int GetCategory(string ruleId)
     {
-        if (ruleId.StartsWith("OP", StringComparison.OrdinalIgnoreCase)) return 2;
-        if (ruleId.StartsWith("SAST", StringComparison.OrdinalIgnoreCase)) return 1;
-        return 0;
+        if (ruleId.StartsWith("OP", StringComparison.OrdinalIgnoreCase)) return CategoryScan;
+        if (ruleId.StartsWith("SAST", StringComparison.OrdinalIgnoreCase)) return CategorySast;
+        return CategoryEditorConfig;
     }
 
     static string CategoryLabel(int cat) => cat switch
     {
-        1 => "SAST",
-        2 => "Scan",
+        CategorySast => "SAST",
+        CategoryScan => "Scan",
         _ => "EditorConfig"
     };
 }

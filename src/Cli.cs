@@ -9,6 +9,9 @@ namespace CsLint;
 /// </summary>
 static class Cli
 {
+    // Process exit code for an unusable invocation: bad config, or no git repo without --global.
+    const int ExitUsageError = 2;
+
     public static async Task<int> RunAsync(string[] args)
     {
         var options = ParseOptions(args);
@@ -28,7 +31,7 @@ static class Cli
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException)
         {
             Console.Error.WriteLine($"Config error: {ex.Message}");
-            return 2;
+            return ExitUsageError;
         }
 
         ApplyConfig(options, config);
@@ -48,7 +51,7 @@ static class Cli
 
         var mode = DetermineMode(options);
         var (resolved, targets) = ResolveTargets(options);
-        if (!resolved) return 2;
+        if (!resolved) return ExitUsageError;
 
         var summary = await engine.LintFilesAsync(targets, mode, options.Fix);
         var allDiagnostics = await CollectDiagnosticsAsync(engine, options, summary);
@@ -190,7 +193,7 @@ static class Cli
         if (!GitResolver.IsGitRepo(root))
         {
             Console.Error.WriteLine("Not a git repository.");
-            return 2;
+            return ExitUsageError;
         }
 
         var (existing, hooksDir) = GitResolver.GetHooksInfo(root);

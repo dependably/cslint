@@ -201,11 +201,13 @@ class EditorConfigLoader
 
     static int AppendGlobToken(System.Text.StringBuilder sb, string glob, int i)
     {
+        const int doubleStarLength = 2; // "**" spans two characters
+
         char c = glob[i];
         if (c == '*' && i + 1 < glob.Length && glob[i + 1] == '*')
         {
             sb.Append(".*");
-            i += 2;
+            i += doubleStarLength;
             if (i < glob.Length && glob[i] == '/') i++;
             return i;
         }
