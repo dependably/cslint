@@ -23,6 +23,7 @@
 #   SNYK_TOKEN            Snyk (SAST) token. UNPROTECTED + masked so MR pipelines can scan.
 #   SONAR_HOST_URL        SonarQube server URL (not a secret)
 #   SONAR_TOKEN           SonarQube analysis token (masked)
+#   SONAR_PROJECT_KEY     SonarQube project key (the project must exist on SONAR_HOST_URL)
 #   GITHUB_TOKEN          GitHub PAT with Contents:write on dependably/cslint, used by mirror.
 
 workflow:
@@ -116,8 +117,12 @@ snyk-code:
   script:
     - snyk code test --severity-threshold=high
 
-# SonarQube analysis. Advisory, default-branch only, only when SONAR_TOKEN is set.
-# TODO(suite): create the SonarQube project and replace the placeholder key below.
+# SonarQube analysis. Advisory, default-branch only, only when the project key + token
+# are set. The token is passed explicitly via /d:sonar.token — the SONAR_TOKEN env var
+# alone is NOT honored by the scanner's begin step against the suite's SonarQube 9.9
+# server ("Authentication with the server has failed"). Safe in the trace: GitLab echoes
+# the literal $SONAR_TOKEN, never the expanded value. SONAR_TOKEN must be masked; set
+# SONAR_PROJECT_KEY to the project's key on $SONAR_HOST_URL.
 sonarqube-check:
   stage: test
   variables:
@@ -128,18 +133,18 @@ sonarqube-check:
     paths:
       - .sonar/cache
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SONAR_TOKEN'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SONAR_TOKEN && $SONAR_PROJECT_KEY'
   before_script:
     - apt-get update && apt-get install --yes --no-install-recommends openjdk-17-jre-headless
     - dotnet tool install --global dotnet-sonarscanner
     - export PATH="$PATH:$HOME/.dotnet/tools"
   script:
     - dotnet sonarscanner begin
-      /k:"REPLACE_WITH_SONAR_PROJECT_KEY"
+      /k:"$SONAR_PROJECT_KEY"
+      /d:sonar.token="$SONAR_TOKEN"
       /d:sonar.host.url="$SONAR_HOST_URL"
-      /d:sonar.login="$SONAR_TOKEN"
     - dotnet build cslint.csproj -c Release
-    - dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+    - dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
   allow_failure: true
 
 pack:
