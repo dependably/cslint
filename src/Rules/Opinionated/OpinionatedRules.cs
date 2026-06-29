@@ -26,11 +26,10 @@ sealed class MagicNumberRule : IRule
     static readonly HashSet<string> AllowedValues = new(StringComparer.Ordinal)
         { "0", "1", "-1", "2", "100", "1000" };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
@@ -94,11 +93,10 @@ sealed class BooleanParameterRule : IRule
     public RuleCategory Category => RuleCategory.Opinionated;
     public bool AppliesTo(FileConfig config) => _config.FlagBooleanParameters;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
@@ -141,11 +139,10 @@ sealed class MissingCancellationTokenRule : IRule
     public RuleCategory Category => RuleCategory.Opinionated;
     public bool AppliesTo(FileConfig config) => _config.FlagMissingCancellationToken;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())

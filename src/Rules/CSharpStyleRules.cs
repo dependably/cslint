@@ -11,15 +11,15 @@ sealed class NamespaceDeclarationStyleRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("csharp_style_namespace_declarations");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "csharp_style_namespace_declarations",
             out var setting, out var severity))
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         var blockNs = root.DescendantNodes().OfType<NamespaceDeclarationSyntax>().ToList();
@@ -62,11 +62,11 @@ sealed class PatternMatchingRule : IRule
         config.Properties.ContainsKey("csharp_style_prefer_not_pattern") ||
         config.Properties.ContainsKey("csharp_style_prefer_pattern_matching");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         CheckIsWithCast(filePath, root, config, diagnostics);
@@ -184,15 +184,15 @@ sealed class ThrowExpressionRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("csharp_style_throw_expression");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "csharp_style_throw_expression",
             out var setting, out var severity) || setting != "true")
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>().Where(IsNullThrowGuard))
@@ -229,15 +229,15 @@ sealed class ConditionalDelegateCallRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("csharp_style_conditional_delegate_call");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "csharp_style_conditional_delegate_call",
             out var setting, out var severity) || setting != "true")
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var ifStmt in root.DescendantNodes().OfType<IfStatementSyntax>())
@@ -297,11 +297,11 @@ sealed class UnusedValueRule : IRule
         config.Properties.ContainsKey("csharp_style_unused_value_expression_statement_preference") ||
         config.Properties.ContainsKey("csharp_style_unused_value_assignment_preference");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         if (StyleHelper.TryGet(config, "csharp_style_unused_value_assignment_preference",

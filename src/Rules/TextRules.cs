@@ -288,8 +288,10 @@ sealed class CharsetRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("charset");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         var expected = config.Properties["charset"].ToLowerInvariant();
         var bytes = await File.ReadAllBytesAsync(filePath);
         var (detected, hasBom) = DetectEncoding(bytes);

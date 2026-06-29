@@ -13,11 +13,11 @@ sealed class VarStyleRule : IRule
         config.Properties.ContainsKey("csharp_style_var_when_type_is_apparent") ||
         config.Properties.ContainsKey("csharp_style_var_elsewhere");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var decl in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>()

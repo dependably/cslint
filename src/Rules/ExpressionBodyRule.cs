@@ -27,11 +27,11 @@ sealed class ExpressionBodyRule : IRule
     // helper stays well under the parameter-count limit (S107).
     sealed record Context(string FilePath, FileConfig Config, List<Diagnostic> Diagnostics);
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var ctx = new Context(filePath, config, new List<Diagnostic>());
 
         foreach (var node in root.DescendantNodes())

@@ -1,5 +1,6 @@
 using CsLint;
 using CsLint.Rules;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace CsLint.Tests;
 
@@ -20,6 +21,17 @@ static class T
         new(props.ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase),
             new List<(string, string)>());
 
+    /// <summary>
+    /// Builds a <see cref="SourceUnit"/> from an on-disk file the same way the engine does:
+    /// read the text once and parse the tree once, then share it.
+    /// </summary>
+    public static SourceUnit Unit(string path, FileConfig? config = null)
+    {
+        var text = File.ReadAllText(path);
+        var tree = CSharpSyntaxTree.ParseText(text);
+        return new SourceUnit(path, text, tree, tree.GetRoot(), config ?? Cfg());
+    }
+
     /// <summary>Runs a rule against a source snippet and returns its diagnostics.</summary>
     public static async Task<IReadOnlyList<Diagnostic>> Run(
         IRule rule, string code, FileConfig? config = null)
@@ -27,7 +39,7 @@ static class T
         var path = WriteCs(code);
         try
         {
-            return await rule.AnalyzeAsync(path, config ?? Cfg());
+            return await rule.AnalyzeAsync(Unit(path, config));
         }
         finally
         {

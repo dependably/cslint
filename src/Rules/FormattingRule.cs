@@ -53,9 +53,11 @@ sealed class FormattingRule : IRule
         config.ConfigFiles.Count > 0 &&
         config.Properties.Keys.Any(k => FormattingKeys.Contains(k));
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var source = unit.Text;
         var formatted = await FormatWithRoslynAsync(filePath, source, config);
         if (formatted == null || formatted == source) return [];
         return DiffLines(filePath, source, formatted);

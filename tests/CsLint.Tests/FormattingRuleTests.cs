@@ -43,7 +43,7 @@ public class FormattingRuleTests
         var path = T.WriteCs("class C{void M(int a,int b){int x=1;}}");
         try
         {
-            var diags = await new FormattingRule().AnalyzeAsync(path, FmtCfg());
+            var diags = await new FormattingRule().AnalyzeAsync(T.Unit(path, FmtCfg()));
             Assert.NotNull(diags);
             Assert.All(diags, d => Assert.Equal("FMT", d.Rule));
         }
@@ -57,7 +57,7 @@ public class FormattingRuleTests
         var path = T.WriteCs(wellFormatted);
         try
         {
-            var diags = await new FormattingRule().AnalyzeAsync(path, FmtCfg());
+            var diags = await new FormattingRule().AnalyzeAsync(T.Unit(path, FmtCfg()));
             Assert.Empty(diags);
         }
         finally { File.Delete(path); }
