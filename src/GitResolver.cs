@@ -54,9 +54,35 @@ static class GitResolver
             .ToList();
     }
 
+    // Resolve git to an absolute path once, from PATH, rather than letting Process search PATH
+    // at launch — so the executable we run is the one we picked, not whatever a later-prepended
+    // PATH entry resolves to (S4036 / CWE-426 untrusted search path).
+    static readonly string GitExecutable = ResolveGitExecutable();
+
+    static string ResolveGitExecutable()
+    {
+        var exe = OperatingSystem.IsWindows() ? "git.exe" : "git";
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(dir.Trim(), exe);
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            }
+            catch (ArgumentException)
+            {
+                // Skip malformed PATH entries (invalid path characters).
+            }
+        }
+
+        return exe; // Not found on PATH; fall back to OS resolution at launch.
+    }
+
     static string Run(string arguments, string workingDir)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("git", arguments)
+        var psi = new System.Diagnostics.ProcessStartInfo(GitExecutable, arguments)
         {
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,

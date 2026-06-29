@@ -16,12 +16,7 @@ static class Cli
         if (options.ShowHelp) { PrintHelp(); return 0; }
         if (options.InstallHook) return InstallGitHook(options.Root);
 
-        if (options.DeepMode && !SemanticEngine.TryRegisterMsBuild(out var msbuildError))
-        {
-            Console.Error.WriteLine($"Cannot load MSBuild: {msbuildError}");
-            Console.Error.WriteLine("Ensure the .NET SDK is installed. Falling back to syntactic analysis.");
-            options.DeepMode = false;
-        }
+        EnsureMsBuildOrFallback(options);
 
         // Shared .dependably-check config (repo root). CLI flags win: --strict / --no-* can only
         // further restrict what the file allows.
@@ -36,11 +31,7 @@ static class Cli
             return 2;
         }
 
-        options.Strict = options.Strict || config.Strict;
-        options.FlagMagicNumbers = options.FlagMagicNumbers && config.ScanMagicNumbers;
-        options.FlagBoolFlags = options.FlagBoolFlags && config.ScanBoolFlags;
-        options.FlagCancellationToken = options.FlagCancellationToken && config.ScanCancellation;
-        options.Exclude = [.. options.Exclude, .. config.Exclude]; // CLI globs + config globs
+        ApplyConfig(options, config);
 
         var scanConfig = new ScanConfig(
             FlagMagicNumbers: options.FlagMagicNumbers,
@@ -60,7 +51,38 @@ static class Cli
         if (!resolved) return 2;
 
         var summary = await engine.LintFilesAsync(targets, mode, options.Fix);
+        var allDiagnostics = await CollectDiagnosticsAsync(engine, options, summary);
 
+        return ReportAndExit(allDiagnostics, options, summary, mode);
+    }
+
+    // --deep needs MSBuild registered before any MSBuild type loads; if that fails, warn and
+    // fall back to syntactic analysis.
+    static void EnsureMsBuildOrFallback(CliOptions options)
+    {
+        if (options.DeepMode && !SemanticEngine.TryRegisterMsBuild(out var msbuildError))
+        {
+            Console.Error.WriteLine($"Cannot load MSBuild: {msbuildError}");
+            Console.Error.WriteLine("Ensure the .NET SDK is installed. Falling back to syntactic analysis.");
+            options.DeepMode = false;
+        }
+    }
+
+    // Fold the .dependably-check config into the options. CLI flags only ever restrict further:
+    // --strict forces strict on; a --no-* flag (already off here) can't be re-enabled by the file.
+    static void ApplyConfig(CliOptions options, CsLintConfig config)
+    {
+        options.Strict = options.Strict || config.Strict;
+        options.FlagMagicNumbers = options.FlagMagicNumbers && config.ScanMagicNumbers;
+        options.FlagBoolFlags = options.FlagBoolFlags && config.ScanBoolFlags;
+        options.FlagCancellationToken = options.FlagCancellationToken && config.ScanCancellation;
+        options.Exclude = [.. options.Exclude, .. config.Exclude]; // CLI globs + config globs
+    }
+
+    // Syntactic findings, plus Roslyn semantic diagnostics when --deep --project is in play.
+    static async Task<IReadOnlyList<Diagnostic>> CollectDiagnosticsAsync(
+        LintEngine engine, CliOptions options, Summary summary)
+    {
         IReadOnlyList<Diagnostic> allDiagnostics = summary.Diagnostics.ToList();
 
         if (options.DeepMode && options.ProjectPath != null)
@@ -71,6 +93,14 @@ static class Cli
             allDiagnostics = [.. allDiagnostics, .. semanticDiags];
         }
 
+        return allDiagnostics;
+    }
+
+    // Print the report + summary line and return the process exit code (1 on errors, or on
+    // warnings under --strict).
+    static int ReportAndExit(
+        IReadOnlyList<Diagnostic> allDiagnostics, CliOptions options, Summary summary, LintMode mode)
+    {
         Reporter.Write(allDiagnostics, options.Format, options.Root);
 
         var totalFiles = summary.FilesChecked;
@@ -81,18 +111,16 @@ static class Cli
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode ? " + semantic" : "") + ".");
 
-        if (errors > 0 || (options.Strict && warnings > 0))
+        if (errors == 0 && !(options.Strict && warnings > 0)) return 0;
+
+        if (options.Strict && warnings > 0 && errors == 0)
         {
-            if (options.Strict && warnings > 0 && errors == 0)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("--strict: warnings treated as errors.");
-                Console.ResetColor();
-            }
-            return 1;
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("--strict: warnings treated as errors.");
+            Console.ResetColor();
         }
 
-        return 0;
+        return 1;
     }
 
     public static LintMode DetermineMode(CliOptions opts)
@@ -240,36 +268,37 @@ static class Cli
         }
     }
 
+    // Flags that consume the following argument, mapped to the setter applied to that value.
+    static readonly Dictionary<string, Action<CliOptions, string>> ValueOptions = new()
+    {
+        ["--explain"] = (o, v) => o.ExplainFile = Path.GetFullPath(v),
+        ["--project"] = (o, v) => o.ProjectPath = Path.GetFullPath(v),
+        ["-p"] = (o, v) => o.ProjectPath = Path.GetFullPath(v),
+        ["--format"] = SetFormat,
+        ["-f"] = SetFormat,
+        ["--root"] = (o, v) => o.Root = Path.GetFullPath(v),
+        ["-r"] = (o, v) => o.Root = Path.GetFullPath(v),
+        ["--config"] = (o, v) => o.ConfigPath = Path.GetFullPath(v),
+        ["--exclude"] = (o, v) => o.Exclude.Add(v),
+    };
+
+    static void SetFormat(CliOptions opts, string value)
+    {
+        if (Enum.TryParse<OutputFormat>(value, true, out var fmt)) opts.Format = fmt;
+    }
+
     // Options that take a following value (and bare positional paths). Returns the (possibly
     // advanced) index after consuming any value argument.
     static int ParseValueOption(CliOptions opts, string[] args, int i, List<string> positional)
     {
-        switch (args[i])
+        if (ValueOptions.TryGetValue(args[i], out var apply))
         {
-            case "--explain":
-                if (++i < args.Length) opts.ExplainFile = Path.GetFullPath(args[i]);
-                break;
-            case "--project" or "-p":
-                if (++i < args.Length) opts.ProjectPath = Path.GetFullPath(args[i]);
-                break;
-            case "--format" or "-f":
-                if (++i < args.Length && Enum.TryParse<OutputFormat>(args[i], true, out var fmt))
-                    opts.Format = fmt;
-                break;
-            case "--root" or "-r":
-                if (++i < args.Length) opts.Root = Path.GetFullPath(args[i]);
-                break;
-            case "--config":
-                if (++i < args.Length) opts.ConfigPath = Path.GetFullPath(args[i]);
-                break;
-            case "--exclude":
-                if (++i < args.Length) opts.Exclude.Add(args[i]);
-                break;
-            default:
-                if (!args[i].StartsWith('-'))
-                    positional.Add(Path.GetFullPath(args[i]));
-                break;
+            if (++i < args.Length) apply(opts, args[i]);
+            return i;
         }
+
+        if (!args[i].StartsWith('-'))
+            positional.Add(Path.GetFullPath(args[i]));
         return i;
     }
 
