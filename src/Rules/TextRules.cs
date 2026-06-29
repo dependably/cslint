@@ -190,39 +190,49 @@ sealed class LineEndingRule : TextRule
         string filePath, string text, FileConfig config)
     {
         var eol = config.Properties["end_of_line"].ToLowerInvariant();
-        var diagnostics = new List<Diagnostic>();
-        int lineNum = 1;
 
+        // One finding per file, not per mismatched line. A cross-platform checkout where the
+        // file is all-LF but .editorconfig asks for CRLF previously emitted one EC004 per line
+        // (millions on a large repo, burying every other finding). Count the endings once and
+        // report a single diagnostic describing the file's predominant style.
+        var (crlf, loneLf, loneCr) = CountLineEndings(text);
+
+        bool mismatch =
+            (crlf > 0 && eol != "crlf") ||
+            (loneLf > 0 && eol != "lf") ||
+            (loneCr > 0 && eol != "cr");
+
+        if (!mismatch) return [];
+
+        var actual = PredominantStyle(crlf, loneLf, loneCr);
+        return [Warn(filePath, 1, 0, Id,
+            $"File uses {actual} line endings but .editorconfig sets end_of_line={eol}.")];
+    }
+
+    static (int Crlf, int LoneLf, int LoneCr) CountLineEndings(string text)
+    {
+        int crlf = 0, loneLf = 0, loneCr = 0;
         for (int i = 0; i < text.Length; i++)
         {
             var c = text[i];
-            if (c != '\r' && c != '\n') continue;
-
-            bool isCrlf = c == '\r' && i + 1 < text.Length && text[i + 1] == '\n';
-            var message = c == '\r' ? CarriageReturnMessage(eol, isCrlf) : LineFeedMessage(eol);
-            if (message != null)
-                diagnostics.Add(Warn(filePath, lineNum, 0, Id, message));
-
-            if (isCrlf) i++;
-            lineNum++;
+            if (c == '\r')
+            {
+                if (i + 1 < text.Length && text[i + 1] == '\n') { crlf++; i++; }
+                else loneCr++;
+            }
+            else if (c == '\n') loneLf++;
         }
-
-        return diagnostics;
+        return (crlf, loneLf, loneCr);
     }
 
-    static string? CarriageReturnMessage(string eol, bool isCrlf) => eol switch
+    // The dominant ending present; ties break CRLF > LF > CR so a real mismatch is always named.
+    static string PredominantStyle(int crlf, int loneLf, int loneCr)
     {
-        "lf" => isCrlf ? "CRLF line ending; expected LF." : "CR line ending; expected LF.",
-        "crlf" => isCrlf ? null : "CR line ending; expected CRLF.",
-        _ => null
-    };
-
-    static string? LineFeedMessage(string eol) => eol switch
-    {
-        "crlf" => "LF line ending; expected CRLF.",
-        "cr" => "LF line ending; expected CR.",
-        _ => null
-    };
+        if (crlf >= loneLf && crlf >= loneCr && crlf > 0) return "CRLF";
+        if (loneLf >= loneCr && loneLf > 0) return "LF";
+        if (loneCr > 0) return "CR";
+        return "LF";
+    }
 
     protected override string? ApplyFix(string text, FileConfig config)
     {

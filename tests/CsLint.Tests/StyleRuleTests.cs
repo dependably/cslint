@@ -332,4 +332,19 @@ public class StyleRuleTests
             "class C { private const int max_active = 1; }", FieldNamingCfg());
         Assert.True(diags.Has("CS040"));
     }
+
+    // Regression: the discard `_` (and `__`, …) is an idiomatic unused parameter/local and has no
+    // lowercase first char to validate — it must be exempt from camelCase parameter rules.
+    [Fact]
+    public async Task CS040_discard_parameter_is_exempt()
+    {
+        var cfg = T.Cfg(
+            ("dotnet_naming_rule.params.symbols", "param_group"),
+            ("dotnet_naming_rule.params.style", "camel"),
+            ("dotnet_naming_rule.params.severity", "warning"),
+            ("dotnet_naming_symbols.param_group.applicable_kinds", "parameter"),
+            ("dotnet_naming_style.camel.capitalization", "camel_case"));
+        var diags = await T.Run(new NamingRule(), "class C { void M(int _) { } }", cfg);
+        Assert.False(diags.Has("CS040"));
+    }
 }
