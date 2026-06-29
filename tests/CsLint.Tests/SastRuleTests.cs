@@ -92,7 +92,7 @@ public class SastRuleTests
             "_Tests.cs");
         try
         {
-            var diags = await new ConsoleOutputRule().AnalyzeAsync(path, T.Cfg());
+            var diags = await new ConsoleOutputRule().AnalyzeAsync(T.Unit(path));
             Assert.False(diags.Has("SAST002"));
         }
         finally { File.Delete(path); }
@@ -129,7 +129,7 @@ public class SastRuleTests
         var path = T.WriteCs("class C { void M() { string apiKey = \"sk_live_abc123\"; } }", "_Tests.cs");
         try
         {
-            var diags = await new HardcodedSecretRule().AnalyzeAsync(path, T.Cfg());
+            var diags = await new HardcodedSecretRule().AnalyzeAsync(T.Unit(path));
             Assert.False(diags.Has("SAST004"));
         }
         finally { File.Delete(path); }

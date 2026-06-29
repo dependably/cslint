@@ -10,11 +10,10 @@ sealed class EmptyCatchRule : IRule
     public RuleCategory Category => RuleCategory.Sast;
     public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var clause in root.DescendantNodes().OfType<CatchClauseSyntax>())
@@ -77,13 +76,12 @@ sealed class ConsoleOutputRule : IRule
     static readonly HashSet<string> Methods = new(StringComparer.Ordinal) { "WriteLine", "Write", "Error", "Out" };
     static readonly HashSet<string> Classes = new(StringComparer.Ordinal) { "Console", "Debug", "Trace" };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
         if (TestFileHeuristic.IsTestFile(filePath)) return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -145,11 +143,10 @@ sealed class SqlInjectionRule : IRule
         "CreateCommand",
     };
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -196,15 +193,14 @@ sealed class HardcodedSecretRule : IRule
         ["changeme", "password", "secret", "admin", "test", "yourdomain.com", "example.com", "todo", "fixme", "xxx",
          "your-secret-here", "your_secret_here"];
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
         // Test fixtures legitimately embed credential-shaped literals (fake connection strings,
         // tokens, api-keys); skip them like SAST002 does, to avoid error-level noise on test code.
         if (TestFileHeuristic.IsTestFile(filePath)) return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
@@ -291,11 +287,10 @@ sealed class FireAndForgetRule : IRule
     public RuleCategory Category => RuleCategory.Sast;
     public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var stmt in root.DescendantNodes().OfType<ExpressionStatementSyntax>())
@@ -353,11 +348,11 @@ sealed class PragmaDisableRule : IRule
     public RuleCategory Category => RuleCategory.Sast;
     public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var source = unit.Text;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var trivia in root.DescendantTrivia())
@@ -417,11 +412,10 @@ sealed class ThreadSleepInAsyncRule : IRule
     public RuleCategory Category => RuleCategory.Sast;
     public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -452,11 +446,10 @@ sealed class DynamicUsageRule : IRule
     public RuleCategory Category => RuleCategory.Sast;
     public bool AppliesTo(FileConfig config) => true;
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var node in root.DescendantNodes().OfType<IdentifierNameSyntax>())

@@ -12,14 +12,14 @@ sealed class NamingRule : IRule
         config.Properties.Keys.Any(k =>
             k.StartsWith("dotnet_naming_rule.", StringComparison.OrdinalIgnoreCase));
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         var rules = ParseRules(config.Properties);
         if (rules.Count == 0) return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var node in root.DescendantNodes())

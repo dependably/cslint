@@ -191,7 +191,7 @@ public class TextRuleTests
         File.WriteAllBytes(path, new byte[] { 0xEF, 0xBB, 0xBF, (byte)'a' });
         try
         {
-            var diags = await new CharsetRule().AnalyzeAsync(path, T.Cfg(("charset", "utf-8")));
+            var diags = await new CharsetRule().AnalyzeAsync(T.Unit(path, T.Cfg(("charset", "utf-8"))));
             Assert.True(diags.Has("EC006"));
         }
         finally { File.Delete(path); }
@@ -204,7 +204,7 @@ public class TextRuleTests
         File.WriteAllBytes(path, new byte[] { (byte)'a' });
         try
         {
-            var diags = await new CharsetRule().AnalyzeAsync(path, T.Cfg(("charset", "utf-8-bom")));
+            var diags = await new CharsetRule().AnalyzeAsync(T.Unit(path, T.Cfg(("charset", "utf-8-bom"))));
             Assert.True(diags.Has("EC006"));
         }
         finally { File.Delete(path); }

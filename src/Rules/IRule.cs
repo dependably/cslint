@@ -1,13 +1,34 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+
 namespace CsLint.Rules;
 
 enum RuleCategory { EditorConfig, Sast, Opinionated }
+
+/// <summary>
+/// A single file's source read and parsed exactly once, then shared across every rule that runs
+/// against it. The engine builds one of these per file (in the parallel file loop) and hands the
+/// same instance to all applicable rules, so a file is no longer read + parsed once per rule.
+/// Text-only rules consume <see cref="Text"/>; syntax rules consume <see cref="Tree"/>/<see cref="Root"/>.
+/// </summary>
+sealed record SourceUnit(string Path, string Text, SyntaxTree Tree, SyntaxNode Root, FileConfig Config)
+{
+    /// <summary>Reads and parses <paramref name="path"/> once, producing the shared per-file unit.</summary>
+    public static async Task<SourceUnit> LoadAsync(string path, FileConfig config)
+    {
+        var text = await File.ReadAllTextAsync(path);
+        var tree = CSharpSyntaxTree.ParseText(text);
+        var root = await tree.GetRootAsync();
+        return new SourceUnit(path, text, tree, root, config);
+    }
+}
 
 interface IRule
 {
     string Id { get; }
     RuleCategory Category => RuleCategory.EditorConfig;
     bool AppliesTo(FileConfig config);
-    Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config);
+    Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit);
     Task<bool> FixAsync(string filePath, FileConfig config) => Task.FromResult(false);
 }
 
@@ -17,11 +38,8 @@ abstract class TextRule : IRule
     public virtual RuleCategory Category => RuleCategory.EditorConfig;
     public abstract bool AppliesTo(FileConfig config);
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
-    {
-        var text = await File.ReadAllTextAsync(filePath);
-        return Analyze(filePath, text, config);
-    }
+    public Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit) =>
+        Task.FromResult(Analyze(unit.Path, unit.Text, unit.Config));
 
     public async Task<bool> FixAsync(string filePath, FileConfig config)
     {
@@ -48,13 +66,8 @@ abstract class SyntaxRule : IRule
     public virtual RuleCategory Category => RuleCategory.EditorConfig;
     public abstract bool AppliesTo(FileConfig config);
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
-    {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
-        return Analyze(filePath, root, config);
-    }
+    public Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit) =>
+        Task.FromResult(Analyze(unit.Path, unit.Root, unit.Config));
 
     protected abstract IReadOnlyList<Diagnostic> Analyze(
         string filePath, Microsoft.CodeAnalysis.SyntaxNode root, FileConfig config);

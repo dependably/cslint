@@ -72,15 +72,22 @@ class LintEngine
         var rules = SelectRules(mode, config);
         var diagnostics = new List<Diagnostic>();
 
+        // Read + parse the file ONCE, then share the same syntax tree across every rule below
+        // (instead of each rule re-reading and re-parsing the same file). Built lazily so a pure
+        // fix pass that resolves every finding need not parse, and so a file with no applicable
+        // rules costs nothing.
+        SourceUnit? unit = null;
+
         foreach (var rule in rules)
         {
             if (fix && rule.Category == RuleCategory.EditorConfig)
             {
                 var wasFixed = await rule.FixAsync(filePath, config);
-                if (wasFixed) continue;
+                if (wasFixed) { unit = null; continue; }
             }
 
-            await RunRuleAsync(rule, filePath, config, diagnostics);
+            unit ??= await SourceUnit.LoadAsync(filePath, config);
+            await RunRuleAsync(rule, unit, diagnostics);
         }
 
         return diagnostics;
@@ -88,11 +95,12 @@ class LintEngine
 
     // Run one rule and fold its (severity-adjusted) findings into the list. Kept separate so the
     // try / foreach / if nesting stays shallow.
-    static async Task RunRuleAsync(IRule rule, string filePath, FileConfig config, List<Diagnostic> diagnostics)
+    static async Task RunRuleAsync(IRule rule, SourceUnit unit, List<Diagnostic> diagnostics)
     {
+        var config = unit.Config;
         try
         {
-            var results = await rule.AnalyzeAsync(filePath, config);
+            var results = await rule.AnalyzeAsync(unit);
             foreach (var d in results)
             {
                 var adjusted = ApplySeverityOverride(d, config);
@@ -101,7 +109,7 @@ class LintEngine
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(filePath)}: {ex.Message}");
+            Console.Error.WriteLine($"  [{rule.Id}] error on {Path.GetFileName(unit.Path)}: {ex.Message}");
         }
     }
 

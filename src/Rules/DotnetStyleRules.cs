@@ -14,11 +14,11 @@ sealed class QualificationRule : IRule
         config.Properties.ContainsKey("dotnet_style_qualification_for_method") ||
         config.Properties.ContainsKey("dotnet_style_qualification_for_event");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var access in root.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
@@ -79,11 +79,11 @@ sealed class PredefinedTypeRule : IRule
         config.Properties.ContainsKey("dotnet_style_predefined_type_for_locals_parameters_members") ||
         config.Properties.ContainsKey("dotnet_style_predefined_type_for_member_access");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         bool localsTrue = StyleHelper.TryGet(config, "dotnet_style_predefined_type_for_locals_parameters_members", out var lVal, out var lSev) && lVal == "true";
@@ -142,17 +142,17 @@ sealed class AccessibilityModifiersRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("dotnet_style_require_accessibility_modifiers");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "dotnet_style_require_accessibility_modifiers",
             out var setting, out var severity))
             return [];
 
         if (setting is "never" or "omit_if_default") return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
@@ -226,15 +226,15 @@ sealed class ReadonlyFieldRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("dotnet_style_readonly_field");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "dotnet_style_readonly_field",
             out var setting, out var severity) || setting != "true")
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var field in root.DescendantNodes().OfType<FieldDeclarationSyntax>())
@@ -313,11 +313,11 @@ sealed class ObjectInitializerRule : IRule
         config.Properties.ContainsKey("dotnet_style_object_initializer") ||
         config.Properties.ContainsKey("dotnet_style_collection_initializer");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var filePath = unit.Path;
+        var config = unit.Config;
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         if (StyleHelper.TryGet(config, "dotnet_style_object_initializer",
@@ -378,16 +378,16 @@ sealed class NullCheckPreferenceRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("dotnet_style_prefer_is_null_check_over_reference_equality_method");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config,
             "dotnet_style_prefer_is_null_check_over_reference_equality_method",
             out var setting, out var severity) || setting != "true")
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -427,15 +427,15 @@ sealed class NamespaceMatchFolderRule : IRule
     public bool AppliesTo(FileConfig config) =>
         config.Properties.ContainsKey("dotnet_style_namespace_match_folder");
 
-    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(string filePath, FileConfig config)
+    public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
+        var filePath = unit.Path;
+        var config = unit.Config;
         if (!StyleHelper.TryGet(config, "dotnet_style_namespace_match_folder",
             out var setting, out var severity) || setting != "true")
             return [];
 
-        var source = await File.ReadAllTextAsync(filePath);
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var root = await tree.GetRootAsync();
+        var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
         var fileDir = Path.GetDirectoryName(filePath) ?? "";
 
