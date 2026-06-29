@@ -28,6 +28,11 @@ sealed class NamingRule : IRule
             {
                 if (symbol.Name == null || symbol.Location == null) continue;
 
+                // Idiomatic C# discards / deliberately-unused parameters and locals (`_`, `__`, …)
+                // are all-underscore names; they have no "lowercase first char" to validate and
+                // must not be flagged as CS040 naming violations.
+                if (symbol.Name.Length > 0 && symbol.Name.All(c => c == '_')) continue;
+
                 // Match the first rule whose symbol spec applies — honouring not just the
                 // symbol kind but also required_modifiers and applicable_accessibilities, the
                 // way Roslyn does. Skipping the latter two made every field match a

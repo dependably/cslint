@@ -125,17 +125,37 @@ public class TextRuleTests
     [Fact]
     public async Task EC004_flags_crlf_when_lf_expected()
     {
+        // EC004 is now one-per-file (was one-per-line): a single finding even with a CRLF present.
         var diags = await T.Run(new LineEndingRule(), "a\r\nb\n",
             T.Cfg(("end_of_line", "lf")));
-        Assert.True(diags.Has("EC004"));
+        Assert.Equal(1, diags.Count(d => d.Rule == "EC004"));
     }
 
     [Fact]
     public async Task EC004_flags_lf_when_crlf_expected()
     {
+        // One-per-file: was one finding per mismatched line.
         var diags = await T.Run(new LineEndingRule(), "a\nb\n",
             T.Cfg(("end_of_line", "crlf")));
-        Assert.True(diags.Has("EC004"));
+        Assert.Equal(1, diags.Count(d => d.Rule == "EC004"));
+    }
+
+    [Fact]
+    public async Task EC004_multiline_mismatch_yields_single_finding()
+    {
+        // Regression: a wholly-LF file with end_of_line=crlf (the common cross-platform checkout)
+        // must produce exactly one EC004, not one per line.
+        var diags = await T.Run(new LineEndingRule(), "a\nb\nc\nd\ne\n",
+            T.Cfg(("end_of_line", "crlf")));
+        Assert.Equal(1, diags.Count(d => d.Rule == "EC004"));
+    }
+
+    [Fact]
+    public async Task EC004_clean_when_matching()
+    {
+        var diags = await T.Run(new LineEndingRule(), "a\nb\n",
+            T.Cfg(("end_of_line", "lf")));
+        Assert.False(diags.Has("EC004"));
     }
 
     [Fact]
