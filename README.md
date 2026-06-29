@@ -168,6 +168,7 @@ Runs after `dotnet build`. Requires `--project` pointing to a `.csproj` or `.sln
 |------|----------------|
 | CS010-S | Accurate `var` style enforcement using resolved types |
 | CS033-S | Accurate `readonly` field detection using data flow |
+| IDE0005 | Unnecessary `using` directives (CS8019); enabled by `dotnet_diagnostic.IDE0005.severity` in `.editorconfig` |
 | CSXXXX | `dotnet_diagnostic.CSXXXX.severity` overrides from `.editorconfig` applied to all Roslyn diagnostics |
 
 ### Tier 4: Opinionated scan (`--scan`)
