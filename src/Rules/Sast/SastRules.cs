@@ -259,6 +259,10 @@ sealed class HardcodedSecretRule : IRule
     // plainly not credentials: numeric defaults ("1000"), permission scopes / URIs / paths
     // ("tokens:manage_own"), and plain identifier words used as scheme names ("ApiToken").
     // A real secret carries entropy — digits mixed with symbols, base64/hex — and survives this.
+    // Above this length a single PascalCase letter-only word is too long to be a plausible
+    // scheme/enum identifier, so we stop treating it as obviously-non-secret.
+    const int MaxIdentifierWordLength = 40;
+
     static bool IsLikelyNonSecretValue(string value)
     {
         var v = value.Trim();
@@ -269,7 +273,7 @@ sealed class HardcodedSecretRule : IRule
         if (v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_'))
             return true;
         // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
-        if (v.Length <= 40 && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
+        if (v.Length <= MaxIdentifierWordLength && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
         return false;
     }
 
@@ -390,7 +394,7 @@ sealed class PragmaDisableRule : IRule
             if (prev.Length == 0) continue; // skip blank lines between the comment and the pragma
             return prev.StartsWith("//", StringComparison.Ordinal)
                 || prev.StartsWith("/*", StringComparison.Ordinal)
-                || prev.StartsWith("*", StringComparison.Ordinal)   // middle/last line of a block comment
+                || prev.StartsWith('*')   // middle/last line of a block comment
                 || prev.EndsWith("*/", StringComparison.Ordinal);
         }
         return false;

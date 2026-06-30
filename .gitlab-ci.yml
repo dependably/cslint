@@ -142,11 +142,14 @@ sonarqube-check:
       /k:"$SONAR_PROJECT_KEY"
       /d:sonar.token="$SONAR_TOKEN"
       /d:sonar.host.url="$SONAR_HOST_URL"
-      /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+      /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover*.xml"
     - dotnet build cslint.csproj -c Release
     # Run the unit tests under coverlet to emit an OpenCover report of cslint's lines/branches,
     # which the scanner ingests via sonar.cs.opencover.reportsPaths (the test project is marked
     # IsTestProject, so its own code is excluded from issue analysis but still measures coverage).
+    # The test project multi-targets (net8.0;net10.0), so coverlet writes one report per TFM with
+    # the moniker folded into the name (coverage.opencover.net8.0.xml, ...net10.0.xml) — hence the
+    # `coverage.opencover*.xml` glob above. A bare coverage.opencover.xml is never produced.
     - dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release
       /p:CollectCoverage=true
       /p:CoverletOutputFormat=opencover

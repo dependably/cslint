@@ -135,7 +135,7 @@ public class ReporterTests
         Assert.Equal("EC001", first.GetProperty("ruleId").GetString());
         Assert.Equal("editorconfig", first.GetProperty("category").GetString());
         Assert.Equal("indent", first.GetProperty("message").GetString());
-        Assert.False(first.GetProperty("location").GetProperty("file").GetString()!.Length == 0);
+        Assert.NotEmpty(first.GetProperty("location").GetProperty("file").GetString()!);
         Assert.Equal(3, first.GetProperty("location").GetProperty("line").GetInt32());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, first.GetProperty("remediation").ValueKind);
 
