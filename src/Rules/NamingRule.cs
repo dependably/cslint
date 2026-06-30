@@ -26,35 +26,42 @@ sealed class NamingRule : IRule
         {
             foreach (var symbol in ExtractSymbols(node))
             {
-                if (symbol.Name == null || symbol.Location == null) continue;
-
-                // Idiomatic C# discards / deliberately-unused parameters and locals (`_`, `__`, …)
-                // are all-underscore names; they have no "lowercase first char" to validate and
-                // must not be flagged as CS040 naming violations.
-                if (symbol.Name.Length > 0 && symbol.Name.All(c => c == '_')) continue;
-
-                // Match the first rule whose symbol spec applies — honouring not just the
-                // symbol kind but also required_modifiers and applicable_accessibilities, the
-                // way Roslyn does. Skipping the latter two made every field match a
-                // const-only rule (CS040 false positives on `_camelCase` instance fields).
-                var matchedRule = rules.FirstOrDefault(r =>
-                    r.Symbols.Contains(symbol.Kind)
-                    && r.Modifiers.All(m => symbol.Modifiers.Contains(m))
-                    && AccessibilityMatches(r.Accessibilities, symbol.Accessibility));
-                if (matchedRule == null) continue;
-
-                if (!ValidateName(symbol.Name, matchedRule.Style))
-                {
-                    var loc = symbol.Location.GetLineSpan();
-                    diagnostics.Add(StyleHelper.Make(filePath,
-                        loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                        $"Name '{symbol.Name}' violates naming rule '{matchedRule.Name}': expected {DescribeStyle(matchedRule.Style)}.",
-                        matchedRule.Severity));
-                }
+                var diagnostic = CheckSymbol(symbol, rules, filePath);
+                if (diagnostic != null) diagnostics.Add(diagnostic);
             }
         }
 
         return diagnostics;
+    }
+
+    // Validate one symbol against the naming rules; returns a CS040 diagnostic when it violates the
+    // first matching rule, or null when it is exempt or compliant.
+    Diagnostic? CheckSymbol(SymbolInfo symbol, List<NamingRuleDefinition> rules, string filePath)
+    {
+        if (symbol.Name == null || symbol.Location == null) return null;
+
+        // Idiomatic C# discards / deliberately-unused parameters and locals (`_`, `__`, …)
+        // are all-underscore names; they have no "lowercase first char" to validate and
+        // must not be flagged as CS040 naming violations.
+        if (symbol.Name.Length > 0 && symbol.Name.All(c => c == '_')) return null;
+
+        // Match the first rule whose symbol spec applies — honouring not just the symbol kind
+        // but also required_modifiers and applicable_accessibilities, the way Roslyn does.
+        // Skipping the latter two made every field match a const-only rule (CS040 false
+        // positives on `_camelCase` instance fields).
+        var matchedRule = rules.FirstOrDefault(r =>
+            r.Symbols.Contains(symbol.Kind)
+            && r.Modifiers.All(m => symbol.Modifiers.Contains(m))
+            && AccessibilityMatches(r.Accessibilities, symbol.Accessibility));
+        if (matchedRule == null) return null;
+
+        if (ValidateName(symbol.Name, matchedRule.Style)) return null;
+
+        var loc = symbol.Location.GetLineSpan();
+        return StyleHelper.Make(filePath,
+            loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+            $"Name '{symbol.Name}' violates naming rule '{matchedRule.Name}': expected {DescribeStyle(matchedRule.Style)}.",
+            matchedRule.Severity);
     }
 
     // A rule with no applicable_accessibilities (or the '*' wildcard) applies to any

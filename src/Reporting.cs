@@ -134,7 +134,7 @@ static class Reporter
         IReadOnlyList<Diagnostic> diagnostics, string root, int scanned, int exitCode, string toolVersion)
     {
         var findings = diagnostics
-            .OrderBy(d => CategoryRank(d.Rule))
+            .OrderBy(d => GetCategory(d.Rule))
             .ThenBy(d => d.File, StringComparer.Ordinal)
             .ThenBy(d => d.Line)
             .ThenBy(d => d.Column)
@@ -196,9 +196,12 @@ static class Reporter
     // The shared suite severity ladder: cslint emits error -> high, warning -> low.
     static string Ladder(Severity sev) => sev == Severity.Error ? "high" : "low";
 
-    // The shared-schema category group for a rule id. cslint maps its rule families onto four of
-    // the schema's category values: EC* universal editorconfig rules, CS*/FMT/IDE* general lint,
-    // SAST* security, OP* opinionated patterns.
+    // Category groups in display/sort order: a rule's rank is its index here, used to group both
+    // human and JSON output. EC* universal editorconfig rules, CS*/FMT/IDE* general lint, SAST*
+    // security, OP* opinionated patterns.
+    static readonly string[] CategoryOrder = ["editorconfig", "lint", "sast", "opinionated"];
+
+    // The shared-schema category group for a rule id (one of CategoryOrder).
     static string Category(string ruleId)
     {
         if (ruleId.StartsWith("SAST", StringComparison.OrdinalIgnoreCase)) return "sast";
@@ -208,23 +211,12 @@ static class Reporter
     }
 
     // Stable ordering rank used to group both human and JSON output by category.
-    static int CategoryRank(string ruleId) => Category(ruleId) switch
+    static int GetCategory(string ruleId)
     {
-        "editorconfig" => 0,
-        "lint" => 1,
-        "sast" => 2,
-        "opinionated" => 3,
-        _ => 4,
-    };
+        var rank = Array.IndexOf(CategoryOrder, Category(ruleId));
+        return rank < 0 ? CategoryOrder.Length : rank;
+    }
 
-    static int GetCategory(string ruleId) => CategoryRank(ruleId);
-
-    static string CategoryLabel(int cat) => cat switch
-    {
-        0 => "editorconfig",
-        1 => "lint",
-        2 => "sast",
-        3 => "opinionated",
-        _ => "lint",
-    };
+    static string CategoryLabel(int rank) =>
+        rank >= 0 && rank < CategoryOrder.Length ? CategoryOrder[rank] : "lint";
 }

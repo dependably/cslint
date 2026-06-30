@@ -101,22 +101,11 @@ sealed class BooleanParameterRule : IRule
 
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
-            if (method.Modifiers.Any(SyntaxKind.PrivateKeyword)) continue;
-
-            // An overridden or explicitly-implemented method did not choose its own signature —
-            // the bool parameter was decided by the base type / interface (e.g. the canonical
-            // `protected override void Dispose(bool disposing)`), so it isn't a flag-arg smell.
-            if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)) continue;
-            if (method.ExplicitInterfaceSpecifier != null) continue;
+            if (!DeclaresOwnSignature(method)) continue;
 
             foreach (var param in method.ParameterList.Parameters)
             {
-                if (param.Type is not PredefinedTypeSyntax predefined) continue;
-                if (!predefined.Keyword.IsKind(SyntaxKind.BoolKeyword)) continue;
-                // out/ref/in bool are not flag arguments (e.g. a TryXxx's `out bool`).
-                if (param.Modifiers.Any(m => m.IsKind(SyntaxKind.OutKeyword)
-                        || m.IsKind(SyntaxKind.RefKeyword) || m.IsKind(SyntaxKind.InKeyword)))
-                    continue;
+                if (!IsFlagParameter(param)) continue;
 
                 var loc = param.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -128,6 +117,22 @@ sealed class BooleanParameterRule : IRule
 
         return diagnostics;
     }
+
+    // A private method, an override, or an explicit interface implementation did not freely choose
+    // its own signature — the bool parameter was decided by the base type / interface (e.g. the
+    // canonical `protected override void Dispose(bool disposing)`) — so it isn't a flag-arg smell.
+    static bool DeclaresOwnSignature(MethodDeclarationSyntax method) =>
+        !method.Modifiers.Any(SyntaxKind.PrivateKeyword)
+        && !method.Modifiers.Any(SyntaxKind.OverrideKeyword)
+        && method.ExplicitInterfaceSpecifier == null;
+
+    // A by-value `bool` parameter is the flag-arg smell; out/ref/in bool is not (e.g. a TryXxx's
+    // `out bool`).
+    static bool IsFlagParameter(ParameterSyntax param) =>
+        param.Type is PredefinedTypeSyntax predefined
+        && predefined.Keyword.IsKind(SyntaxKind.BoolKeyword)
+        && !param.Modifiers.Any(m => m.IsKind(SyntaxKind.OutKeyword)
+            || m.IsKind(SyntaxKind.RefKeyword) || m.IsKind(SyntaxKind.InKeyword));
 }
 
 sealed class MissingCancellationTokenRule : IRule

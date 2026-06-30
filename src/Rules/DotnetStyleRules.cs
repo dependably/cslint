@@ -157,14 +157,7 @@ sealed class AccessibilityModifiersRule : IRule
 
         foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
         {
-            if (member is NamespaceDeclarationSyntax or FileScopedNamespaceDeclarationSyntax)
-                continue;
-
-            var modifiers = GetModifiers(member);
-            if (modifiers == null) continue;
-            if (HasAccessModifier(modifiers.Value)) continue;
-            if (CannotHaveAccessModifier(member, modifiers.Value)) continue;
-            if (setting == "for_non_interface_members" && IsInInterface(member)) continue;
+            if (!NeedsAccessModifier(member, setting)) continue;
 
             var loc = member.GetLocation().GetLineSpan();
             diagnostics.Add(StyleHelper.Make(filePath,
@@ -174,6 +167,23 @@ sealed class AccessibilityModifiersRule : IRule
         }
 
         return diagnostics;
+    }
+
+    // True when a member can carry an explicit access modifier, lacks one, and isn't exempted by
+    // the configured setting (namespaces never qualify; interface members are skipped under
+    // `for_non_interface_members`).
+    static bool NeedsAccessModifier(MemberDeclarationSyntax member, string setting)
+    {
+        if (member is NamespaceDeclarationSyntax or FileScopedNamespaceDeclarationSyntax)
+            return false;
+
+        var modifiers = GetModifiers(member);
+        if (modifiers == null) return false;
+        if (HasAccessModifier(modifiers.Value)) return false;
+        if (CannotHaveAccessModifier(member, modifiers.Value)) return false;
+        if (setting == "for_non_interface_members" && IsInInterface(member)) return false;
+
+        return true;
     }
 
     static SyntaxTokenList? GetModifiers(MemberDeclarationSyntax member) => member switch
