@@ -244,7 +244,6 @@ publish:
     - dotnet nuget push "$PKG" --source "$FEED" --api-key "$REGISTRY_KEY" --skip-duplicate
 
 # Mirror the default branch (+ tags) to the public GitHub repo. Manual, default branch only.
-# TODO(suite): create github.com/dependably/cslint before first use.
 mirror-to-github:
   stage: mirror
   interruptible: false
