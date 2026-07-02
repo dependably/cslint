@@ -32,7 +32,7 @@ static class Reporter
         {
             case OutputFormat.Human: WriteHuman(diagnostics, root); break;
             case OutputFormat.Json: WriteJson(diagnostics, root, scanned, exitCode, toolVersion); break;
-            case OutputFormat.GitHub: WriteGitHub(diagnostics); break;
+            case OutputFormat.GitHub: WriteGitHub(diagnostics, root); break;
         }
     }
 
@@ -182,12 +182,12 @@ static class Reporter
         catch (ArgumentException) { return file.Replace('\\', '/'); }
     }
 
-    static void WriteGitHub(IReadOnlyList<Diagnostic> diagnostics)
+    static void WriteGitHub(IReadOnlyList<Diagnostic> diagnostics, string root)
     {
         foreach (var d in diagnostics)
         {
             var level = d.Severity == Severity.Error ? "error" : "warning";
-            var file = d.File.Replace('\\', '/');
+            var file = RelativePath(root, d.File);
             Console.WriteLine(
                 $"::{level} file={file},line={d.Line},col={d.Column}::[{d.Rule}] {d.Message}");
         }
