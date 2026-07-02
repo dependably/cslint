@@ -215,6 +215,53 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP005"));
     }
 
+    // Regression #24 follow-up (Finding 1): ASP.NET Identity store Set*Async methods with a bool
+    // parameter on a class implementing an I*Store interface are dictated by the framework contract
+    // and must not fire OP005. The interface is from an external assembly; the heuristic detects
+    // the pattern via method name (Set*Async) + bool param + I*Store in the base list.
+    // Mutation pin: this test FAILS on code that lacks IsKnownIdentityStoreContractMethod.
+    [Fact]
+    public async Task OP005_ignores_set_async_bool_on_istore_implementing_class()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class UserStore : IUserEmailStore<User>, IUserTwoFactorStore<User> { " +
+            "public Task SetEmailConfirmedAsync(User user, bool confirmed, CancellationToken ct) => Task.CompletedTask; " +
+            "public Task SetTwoFactorEnabledAsync(User user, bool enabled, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.False(diags.Has("OP005"));
+    }
+
+    // Anti-over-broadening guard for Finding 1: a Set*Async bool on a class that does NOT implement
+    // any I*Store interface is still a smell and must fire.
+    [Fact]
+    public async Task OP005_still_flags_set_async_bool_when_no_istore_in_base_list()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class ReportService { " +
+            "public Task SetArchivedAsync(object report, bool archived, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
+    // Regression #24 follow-up (Finding 2): name+count-only matching of in-file interface methods
+    // suppressed unrelated bool-flag overloads whose parameter types differ from those of the matched
+    // interface method. An overload whose parameter types do NOT match the interface must still flag.
+    // Mutation pin: this test FAILS on code that matches by name+count only (no type check).
+    [Fact]
+    public async Task OP005_still_flags_bool_overload_when_interface_has_int_overload_at_same_arity()
+    {
+        // IX declares Foo(int a). C.Foo(int a) is the implicit implementation (correctly suppressed).
+        // C.Foo(bool b) has the same name and arity but a different type — it is an owned method and
+        // must still produce an OP005 finding.
+        const string code =
+            "interface IX { void Foo(int a); } " +
+            "class C : IX { public void Foo(int a) { } public void Foo(bool b) { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
     [Fact]
     public async Task OP006_flags_async_without_cancellation_token()
     {
