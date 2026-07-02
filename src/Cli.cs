@@ -137,10 +137,11 @@ static class Cli
         var totalFiles = summary.FilesChecked;
         var errors = allDiagnostics.Count(d => d.Severity == Severity.Error);
         var warnings = allDiagnostics.Count(d => d.Severity == Severity.Warning);
+        var infos = allDiagnostics.Count(d => d.Severity == Severity.Info);
 
         // Compute the real exit code up front so the JSON envelope's summary.exitCode can carry
         // the exact value the process will return.
-        var tripped = GateTripped(options.FailOn, errors, warnings, allDiagnostics.Count);
+        var tripped = GateTripped(options.FailOn, errors, warnings, infos, allDiagnostics.Count);
         var exitCode = tripped ? 1 : 0;
 
         Reporter.Write(allDiagnostics, options.Format, options.Root, totalFiles, exitCode, Version());
@@ -174,20 +175,21 @@ static class Cli
 
     // Evaluate the CI gate: exit 1 if ANY --fail-on rule trips. A severity rule trips when the
     // most severe finding present is at-or-above the rule's level (cslint ranks error=high,
-    // warning=low); a count rule trips when the total finding count exceeds its threshold.
-    static bool GateTripped(IReadOnlyList<FailOnRule> rules, int errors, int warnings, int total)
+    // warning=low, info=info); a count rule trips when the total finding count exceeds its threshold.
+    static bool GateTripped(IReadOnlyList<FailOnRule> rules, int errors, int warnings, int infos, int total)
     {
-        int maxRank = MaxSeverityRank(errors, warnings);
+        int maxRank = MaxSeverityRank(errors, warnings, infos);
         return rules.Any(r => r.Kind == FailOnKind.Severity
             ? maxRank >= r.Threshold
             : total > r.Threshold);
     }
 
     // The rank of the most severe finding present (or -1 when there are none).
-    static int MaxSeverityRank(int errors, int warnings)
+    static int MaxSeverityRank(int errors, int warnings, int infos)
     {
         if (errors > 0) return RankHigh;
         if (warnings > 0) return RankLow;
+        if (infos > 0) return RankInfo;
         return -1;
     }
 

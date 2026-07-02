@@ -71,6 +71,14 @@ public class ReporterTests
         new("/repo/B.cs", 9, 1, "OP004", "magic", Severity.Warning),
     ];
 
+    // A sample that adds one Info-severity finding (e.g. from a suggestion-level naming rule).
+    static IReadOnlyList<Diagnostic> SampleWithInfo() =>
+    [
+        new("/repo/A.cs", 3, 5, "EC001", "indent", Severity.Warning),
+        new("/repo/B.cs", 7, 1, "SAST001", "empty catch", Severity.Error),
+        new("/repo/C.cs", 2, 1, "CS040", "naming", Severity.Info),
+    ];
+
     [Fact]
     public void Human_reports_no_violations()
     {
@@ -146,6 +154,58 @@ public class ReporterTests
         // The opinionated finding maps OP* -> opinionated.
         var op = findings.EnumerateArray().First(f => f.GetProperty("ruleId").GetString() == "OP004");
         Assert.Equal("opinionated", op.GetProperty("category").GetString());
+    }
+
+    // Bug #23 follow-up (Finding 3b): Reporter must emit correct labels and counts for Info severity.
+
+    [Fact]
+    public void Human_info_finding_shows_info_label_and_summary()
+    {
+        // Reporter uses the suite ladder: Info → "info" label (Cyan), and the summary must
+        // include the info count when infos > 0.
+        var output = T.CaptureOut(() => Reporter.Write(SampleWithInfo(), OutputFormat.Human, "/repo"));
+        Assert.Contains("info", output);        // per-finding "info" severity word
+        Assert.Contains("1 info", output);      // summary segment "1 info"
+        // The error and warning counts must still be correct.
+        Assert.Contains("1 error", output);
+        Assert.Contains("1 warning", output);
+    }
+
+    [Fact]
+    public void Json_info_finding_populates_bySeverity_info()
+    {
+        // bySeverity.info must be 1 (not 0) when there is an Info-severity finding.
+        // The ladder word for each finding must be "info".
+        // This test fails on the pre-fix code because Info findings were treated as warnings.
+        var output = T.CaptureOut(() =>
+            Reporter.Write(SampleWithInfo(), OutputFormat.Json, "/repo",
+                scanned: 3, exitCode: 0, toolVersion: "9.9.9"));
+
+        using var doc = System.Text.Json.JsonDocument.Parse(output);
+        var root = doc.RootElement;
+
+        var bySev = root.GetProperty("summary").GetProperty("bySeverity");
+        Assert.Equal(1, bySev.GetProperty("high").GetInt32());   // SAST001 error
+        Assert.Equal(1, bySev.GetProperty("low").GetInt32());    // EC001 warning
+        Assert.Equal(1, bySev.GetProperty("info").GetInt32());   // CS040 info
+
+        // The CS040 finding must carry severity = "info" in the findings array.
+        var findings = root.GetProperty("findings");
+        var cs040 = findings.EnumerateArray()
+            .First(f => f.GetProperty("ruleId").GetString() == "CS040");
+        Assert.Equal("info", cs040.GetProperty("severity").GetString());
+    }
+
+    [Fact]
+    public void GitHub_emits_notice_for_info_finding()
+    {
+        // Info-severity findings must emit ::notice, not ::warning or ::error.
+        var output = T.CaptureOut(() => Reporter.Write(SampleWithInfo(), OutputFormat.GitHub, "/repo"));
+        Assert.Contains("::notice file=", output);
+        Assert.Contains("[CS040]", output);
+        // error and warning annotations must still appear for the other findings.
+        Assert.Contains("::error file=", output);
+        Assert.Contains("::warning file=", output);
     }
 
     [Fact]

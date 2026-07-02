@@ -125,7 +125,8 @@ class LintEngine
         {
             "none" or "silent" => null,
             "error" => d with { Severity = Severity.Error },
-            "warning" or "suggestion" or "info" or "hint" => d with { Severity = Severity.Warning },
+            "warning" => d with { Severity = Severity.Warning },
+            "suggestion" or "info" or "hint" => d with { Severity = Severity.Info },
             _ => d,
         };
     }
@@ -226,5 +227,6 @@ record Summary(IReadOnlyList<Diagnostic> Diagnostics, int FilesChecked)
 {
     public int ErrorCount => Diagnostics.Count(d => d.Severity == Severity.Error);
     public int WarningCount => Diagnostics.Count(d => d.Severity == Severity.Warning);
+    public int InfoCount => Diagnostics.Count(d => d.Severity == Severity.Info);
     public bool HasErrors => ErrorCount > 0;
 }

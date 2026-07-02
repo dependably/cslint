@@ -259,18 +259,24 @@ class SemanticEngine
                 const int severityPartIndex = 2;
                 if (parts.Length < diagnosticKeyPartCount || parts[severityPartIndex] != "severity") continue;
 
-                overrides[parts[1].ToUpperInvariant()] = value.ToLowerInvariant() switch
-                {
-                    "error" => (Severity?)Severity.Error,
-                    "warning" => Severity.Warning,
-                    "none" or "silent" => null,
-                    _ => Severity.Warning
-                };
+                overrides[parts[1].ToUpperInvariant()] = MapEditorConfigSeverity(value);
             }
         }
 
         return overrides;
     }
+
+    // Maps a dotnet_diagnostic.<Id>.severity string to the cslint Severity (null = suppressed).
+    // Kept internal so tests can pin the suggestion/info/hint → Info alignment without MSBuild.
+    internal static Severity? MapEditorConfigSeverity(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "error" => (Severity?)Severity.Error,
+            "warning" => Severity.Warning,
+            "none" or "silent" => null,
+            "suggestion" or "info" or "hint" => Severity.Info,
+            _ => Severity.Warning
+        };
 
     internal static Severity? GetEffectiveSeverity(
         Microsoft.CodeAnalysis.Diagnostic d,
