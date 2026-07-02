@@ -215,7 +215,7 @@ sbom-publish:
         --form-string "projectVersion=$VERSION" \
         -F "bom=@sbom.json")
       case "$status" in
-        200) echo "✓ SBOM uploaded";;
+        200) echo "SBOM uploaded";;
         *) echo "SBOM upload failed (HTTP $status):" >&2; cat /tmp/bom.out >&2; exit 1;;
       esac
 

@@ -200,11 +200,11 @@ public class SastRuleTests
         Assert.Equal(4, sast003.Count);
     }
 
-    // Regression (Ticket #22, fix A): Dapper's Query* / Execute* extension methods take the SQL
+    // Regression: Dapper's Query* / Execute* extension methods take the SQL
     // as their first argument. QueryAsync was absent from DangerousMethods, so an interpolated
     // Dapper query was invisible. Confirmed live miss: VulnerabilityRepository.cs:653.
-    // Pins the DangerousMethods Dapper additions — on the pre-fix set QueryAsync is unknown so
-    // arg[0] is never inspected and nothing is flagged.
+    // Pins the DangerousMethods Dapper additions: QueryAsync must be a recognised sink so its
+    // first argument is inspected for interpolation.
     [Fact]
     public async Task SAST003_flags_dapper_queryasync_interpolated()
     {
@@ -213,7 +213,7 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST003"));
     }
 
-    // Regression (Ticket #22, fix A over-broadening guard): a fully-parameterised Dapper call
+    // Regression: a fully-parameterised Dapper call
     // — a plain string literal SQL plus an anonymous parameter object — must NOT flag. Adding
     // QueryAsync as a sink must only fire on interpolation, never on every QueryAsync call.
     [Fact]
@@ -224,11 +224,12 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST003"));
     }
 
-    // Regression (Ticket #22, fix B): interpolated SQL assigned to a same-method local that then
+    // Regression: interpolated SQL assigned to a same-method local that then
     // reaches a sink was invisible (the rule only matched interpolated LITERALS in sink position).
     // Uses ExecuteSqlRaw — an existing sink — so this pins the local-variable flow INDEPENDENTLY
-    // of the Dapper sink additions. On the pre-fix code arg[0] is an IdentifierNameSyntax, not an
-    // interpolated string, so nothing is flagged. Confirmed live miss: AuditRepository.cs:257->267.
+    // of the Dapper sink additions. The sink's first argument is an IdentifierNameSyntax (the
+    // local), so the rule must resolve the local's interpolated assignment. Live miss:
+    // AuditRepository.cs:257->267.
     [Fact]
     public async Task SAST003_flags_interpolated_sql_via_local()
     {
@@ -237,7 +238,7 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST003"));
     }
 
-    // Regression (Ticket #22, fix B over-broadening guard): a local assigned a plain string literal
+    // Regression: a local assigned a plain string literal
     // (no interpolation holes) that reaches a sink must NOT flag — the local-flow check keys off
     // interpolation, not merely "a local reached a sink".
     [Fact]
@@ -248,7 +249,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST003"));
     }
 
-    // Regression (Ticket #22, fixes A+B together): the exact live shape — an interpolated SQL
+    // Regression: the exact live shape — an interpolated SQL
     // string assigned to a local, then passed to a Dapper QueryAsync sink. Mirrors the missed
     // AuditRepository.cs:257->267 and BackgroundJobRunRepository.cs:114->130 sites.
     [Fact]
@@ -259,7 +260,7 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST003"));
     }
 
-    // Regression (Ticket #22, fix C): new CommandDefinition($"...{x}...") — Dapper's command
+    // Regression: new CommandDefinition($"...{x}...") — Dapper's command
     // struct. IsSqlCommandType keyed off the Command/DataAdapter suffix and CommandDefinition
     // ends in "Definition", so it slipped through. Pins the explicit SqlCommandTypes entry.
     [Fact]
@@ -321,7 +322,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST004"));
     }
 
-    // Regression (#21): kebab-case display names like "edge-access" must not be flagged as
+    // Regression: kebab-case display names like "edge-access" must not be flagged as
     // hardcoded credentials. The value is a token display name; the real credential lives
     // elsewhere (e.g. an env var stored hashed). Mirrors the dotted-lowercase arm for
     // reverse-DNS event types.
@@ -363,7 +364,7 @@ public class SastRuleTests
         Assert.Single(sast004);
     }
 
-    // Mutation-pin (#21 follow-up): hyphenated tokens with digits must still be flagged —
+    // Mutation-pin: hyphenated tokens with digits must still be flagged —
     // verifies the kebab arm is restricted to letters+hyphens only (no digits).
     // These tests fail if someone widens the arm back to IsLetterOrDigit.
     [Theory]
@@ -376,7 +377,7 @@ public class SastRuleTests
             $"Expected SAST004 for digit-bearing hyphenated token; kebab exemption must not apply to values containing digits.");
     }
 
-    // Mixed partial-failure (#21 follow-up): a file with a clean kebab display name alongside a
+    // Mixed partial-failure: a file with a clean kebab display name alongside a
     // digit-bearing hyphenated token — only the token must fire.
     [Fact]
     public async Task SAST004_mixed_clean_kebab_and_digit_token_flags_only_token()
@@ -394,7 +395,7 @@ public class SastRuleTests
         Assert.Single(sast004);
     }
 
-    // Placeholder parity (#21 follow-up): "your-secret-here" must behave identically to its
+    // Placeholder parity: "your-secret-here" must behave identically to its
     // underscore twin "your_secret_here" — both are in PlaceholderValues and must not be
     // silenced by the kebab-display-name exemption.
     [Theory]
@@ -407,7 +408,7 @@ public class SastRuleTests
             $"Placeholder value must not be silenced by the kebab-display-name exemption.");
     }
 
-    // Placeholder in declaration (#21 follow-up): CheckDeclarator must surface placeholder values,
+    // Placeholder in declaration: CheckDeclarator must surface placeholder values,
     // not only CheckAssignment. Verifies the else-if placeholder arm is present in both paths.
     [Fact]
     public async Task SAST004_flags_placeholder_in_declaration()
@@ -513,7 +514,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST007"));
     }
 
-    // Regression (#4): a SYNCHRONOUS lambda inside an async method runs synchronously on its
+    // Regression: a SYNCHRONOUS lambda inside an async method runs synchronously on its
     // own execution context (e.g. Task.Run(() => Thread.Sleep(...))), so blocking is acceptable.
     // The old ancestor walk (OfType<MethodDeclarationSyntax>) passed straight through the lambda
     // and flagged this as a false positive.
@@ -526,7 +527,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST007"));
     }
 
-    // Regression (#4): an ASYNC lambda IS an async context, even inside a non-async method.
+    // Regression: an ASYNC lambda IS an async context, even inside a non-async method.
     // The old walk never matched lambdas at all, making this a false negative.
     [Fact]
     public async Task SAST007_flags_async_lambda_in_sync_method()
@@ -537,7 +538,7 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST007"));
     }
 
-    // Regression (#4): a synchronous LOCAL FUNCTION inside an async method runs synchronously;
+    // Regression: a synchronous LOCAL FUNCTION inside an async method runs synchronously;
     // the old walk climbed past it to the async method and produced a false positive.
     [Fact]
     public async Task SAST007_clean_sync_local_function_in_async_method()
@@ -548,7 +549,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST007"));
     }
 
-    // Regression (#4): an async local function is an async context.
+    // Regression: an async local function is an async context.
     [Fact]
     public async Task SAST007_flags_async_local_function()
     {
@@ -566,7 +567,7 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST008"));
     }
 
-    // Regression tests for missed type positions (Ticket #10)
+    // Regression tests for missed type positions
 
     [Fact]
     public async Task SAST008_flags_dynamic_cast()
@@ -623,7 +624,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST008"));
     }
 
-    // False-positive slot-position regression tests (Ticket #10 follow-up)
+    // False-positive slot-position regression tests
     // These must NOT produce SAST008: the identifier named "dynamic" is NOT in a type position.
 
     [Fact]
@@ -656,7 +657,7 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST008"));
     }
 
-    // Regression tests for missed type positions (Ticket #17)
+    // Regression tests for missed type positions
 
     [Fact]
     public async Task SAST008_flags_nullable_dynamic()
@@ -785,7 +786,7 @@ public class SastRuleTests
         Assert.Equal(6, sast008.Count);
     }
 
-    // Regression tests for missed type positions (Ticket #18)
+    // Regression tests for missed type positions
 
     [Fact]
     public async Task SAST008_flags_indexer_dynamic_return()
@@ -874,7 +875,7 @@ public class SastRuleTests
         Assert.Equal(2, sast008.Count);
     }
 
-    // Mixed partial-failure: a file covering all five new type positions (Ticket #18) plus the
+    // Mixed partial-failure: a file covering all five new type positions plus the
     // adjacent non-type slots. Only the type-position occurrences must be flagged.
     [Fact]
     public async Task SAST008_mixed_issue18_type_positions_flags_only_type_slots()
@@ -917,7 +918,7 @@ public class SastRuleTests
         Assert.Equal(8, sast008.Count);
     }
 
-    // Regression tests for missed type positions (Ticket #19)
+    // Regression tests for missed type positions
 
     // --- is-expression extension ---
 

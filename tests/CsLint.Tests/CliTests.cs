@@ -148,7 +148,7 @@ public class CliTests
         Assert.True(Cli.ParseOptions(["--install-hook"]).InstallHook);
     }
 
-    // Fix #5: a value option that appears as the last argument (with no following value) must
+    // a value option that appears as the last argument (with no following value) must
     // record an OptionError (exit 2) instead of silently ignoring the option.
     [Fact]
     public void ParseOptions_trailing_value_option_without_value_is_a_usage_error()
@@ -195,7 +195,7 @@ public class CliTests
         Assert.NotNull(explain.OptionError);
     }
 
-    // Fix #5 (adjacent bug): --format with an unrecognized value must record OptionError (exit 2)
+    // --format with an unrecognized value must record OptionError (exit 2)
     // instead of silently falling back to human output.
     [Fact]
     public void ParseOptions_invalid_format_value_is_a_usage_error()
@@ -212,7 +212,7 @@ public class CliTests
         Assert.Null(Cli.ParseOptions(["-f", "json"]).OptionError);
     }
 
-    // Fix #5: the error message must name the offending option.
+    // the error message must name the offending option.
     [Fact]
     public void ParseOptions_trailing_value_option_error_message_names_the_option()
     {
@@ -225,7 +225,7 @@ public class CliTests
         Assert.Contains("--fail-on", o2.OptionError);
     }
 
-    // Fix #5: RunAsync must return exit code 2 when a value option has no value.
+    // RunAsync must return exit code 2 when a value option has no value.
     [Fact]
     public async Task RunAsync_trailing_value_option_exits_two()
     {
@@ -239,7 +239,7 @@ public class CliTests
         Assert.Equal(2, output3.Code);
     }
 
-    // Fix #5 (adjacent bug): RunAsync must return exit code 2 for an invalid --format value.
+    // RunAsync must return exit code 2 for an invalid --format value.
     [Fact]
     public async Task RunAsync_invalid_format_value_exits_two()
     {
@@ -503,10 +503,10 @@ public class CliTests
         Assert.Equal(2, output.Code);
     }
 
-    // Bug #23 follow-up (Finding 1): Info gate counting.
+    // Info gate counting.
     // An Info finding (NamingRule with suggestion severity) must NOT trip --fail-on severity=warning
-    // but MUST trip --fail-on severity=info. Both tests fail on the old code (pre-fix) because
-    // MaxSeverityRank returned -1 for info-only runs, so severity=info gated on -1 >= 0 => false.
+    // but MUST trip --fail-on severity=info. MaxSeverityRank must return info=0 (not -1) for an
+    // info-only run, otherwise the severity=info gate never fires (-1 >= 0 is false).
     static string InfoFindingEditorConfig() =>
         """
         root = true
@@ -537,8 +537,8 @@ public class CliTests
     public async Task RunAsync_info_finding_trips_severity_info_gate()
     {
         // An Info (suggestion) finding must trip --fail-on severity=info (at-or-above info=0).
-        // This test fails on the old code: MaxSeverityRank returned -1 (no errors/warnings),
-        // so -1 >= 0 was false and the gate never fired.
+        // MaxSeverityRank must return info=0 for an info-only run; a -1 result leaves the gate
+        // unfired (-1 >= 0 is false).
         var dir = T.TempDir();
         File.WriteAllText(Path.Combine(dir, ".editorconfig"), InfoFindingEditorConfig());
         File.WriteAllText(Path.Combine(dir, "A.cs"), "class C { void lowercaseMethod() { } }");
@@ -608,7 +608,7 @@ public class CliTests
     }
 
     // Regression: --deep without --project silently degraded to syntactic-only analysis,
-    // exiting 0 while falsely reporting "Mode: editorconfig + semantic." (ticket #7).
+    // exiting 0 while falsely reporting "Mode: editorconfig + semantic."
     [Fact]
     public void ParseOptions_deep_without_project_leaves_ProjectPath_null()
     {
@@ -625,7 +625,6 @@ public class CliTests
     public async Task RunAsync_deep_without_project_exits_two()
     {
         // --deep without --project must exit 2 (usage error), not silently run syntactic-only
-        // and exit 0. This test fails on the old code (which exits 0) and passes on the fix.
         var dir = T.TempDir();
         File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
         try

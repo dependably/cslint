@@ -64,7 +64,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
-    // Regression #25: textual allow-list missed float spellings such as 1.0 (numeric-equiv of 1).
+    // Regression: textual allow-list missed float spellings such as 1.0 (numeric-equiv of 1).
     [Fact]
     public async Task OP004_allows_float_equivalent_of_allow_listed_integer()
     {
@@ -80,7 +80,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
-    // Regression #25: a literal in a named-argument position is already self-documenting.
+    // Regression: a literal in a named-argument position is already self-documenting.
     [Fact]
     public async Task OP004_ignores_named_argument()
     {
@@ -98,7 +98,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
-    // Regression #25 follow-up: a positional literal inside a call that is itself passed as a
+    // Regression: a positional literal inside a call that is itself passed as a
     // named argument must still be flagged — only the literal that IS the named-arg value is exempt.
     // `Outer(policy: Inner(3, 500))` — the `500` is positional to Inner, not the named arg itself.
     [Fact]
@@ -110,7 +110,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
-    // Regression #25 follow-up: a positional literal in a lambda body passed as a named argument
+    // Regression: a positional literal in a lambda body passed as a named argument
     // must still be flagged — the lambda body is not itself the named-arg value.
     [Fact]
     public async Task OP004_still_flags_positional_literal_in_lambda_passed_as_named_argument()
@@ -137,7 +137,7 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
-    // Regression #11: a method with no access modifier in a class is implicitly private and must
+    // Regression: a method with no access modifier in a class is implicitly private and must
     // not be flagged — only API surface (public/internal/protected) warrants the smell.
     [Fact]
     public async Task OP005_ignores_implicitly_private_method_in_class()
@@ -147,7 +147,7 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
-    // Regression #11: an interface method with no modifier is implicitly public API surface and
+    // Regression: an interface method with no modifier is implicitly public API surface and
     // must still be flagged.
     [Fact]
     public async Task OP005_flags_interface_method_without_modifier()
@@ -184,7 +184,7 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
-    // Regression #24: an implicit interface implementation's bool parameter is dictated by the
+    // Regression: an implicit interface implementation's bool parameter is dictated by the
     // interface contract, not freely chosen — the implementing class's method must not add a
     // second diagnostic beyond the one already raised for the interface declaration itself.
     [Fact]
@@ -201,7 +201,7 @@ public class OpinionatedRuleTests
         Assert.Single(diags.Where(d => d.Rule == "OP005").ToList());
     }
 
-    // Anti-over-broadening guard for #24: a public bool-flag method in a class that lists an
+    // Anti-over-broadening guard: a public bool-flag method in a class that lists an
     // external interface in its base list (not declared in the same file) must still be flagged
     // because we cannot verify the match without semantic analysis.
     [Fact]
@@ -215,7 +215,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP005"));
     }
 
-    // Regression #24 follow-up (Finding 1): ASP.NET Identity store Set*Async methods with a bool
+    // Regression: ASP.NET Identity store Set*Async methods with a bool
     // parameter on a class implementing an I*Store interface are dictated by the framework contract
     // and must not fire OP005. The interface is from an external assembly; the heuristic detects
     // the pattern via method name (Set*Async) + bool param + I*Store in the base list.
@@ -262,7 +262,7 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP005"));
     }
 
-    // Regression #24 follow-up (Finding 2): name+count-only matching of in-file interface methods
+    // Regression: name+count-only matching of in-file interface methods
     // suppressed unrelated bool-flag overloads whose parameter types differ from those of the matched
     // interface method. An overload whose parameter types do NOT match the interface must still flag.
     // Mutation pin: this test FAILS on code that matches by name+count only (no type check).
