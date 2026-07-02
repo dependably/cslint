@@ -170,6 +170,49 @@ public class ReporterTests
         // Absolute paths must not appear.
         Assert.DoesNotContain("file=/repo/", output);
     }
+
+    [Fact]
+    public void GitHub_encodes_comma_in_file_path()
+    {
+        // A comma in the file path would split the property list and break the runner's parser.
+        // The fix must produce %2C so the runner sees one file property, not two.
+        var diagnostics = new Diagnostic[]
+        {
+            new("/repo/file,name.cs", 1, 1, "EC001", "indent", Severity.Error),
+        };
+        var output = T.CaptureOut(() => Reporter.Write(diagnostics, OutputFormat.GitHub, "/repo"));
+        // The file value must contain %2C, never a raw comma between file= and ,line=
+        Assert.Contains("%2C", output);
+        Assert.DoesNotContain("file=/repo/file,name.cs,line=", output);
+    }
+
+    [Fact]
+    public void GitHub_encodes_percent_in_file_path()
+    {
+        // A literal '%' in the file path must be encoded first (%25) so subsequent
+        // replacements never double-encode already-encoded sequences.
+        var diagnostics = new Diagnostic[]
+        {
+            new("/repo/file%20name.cs", 2, 3, "SAST001", "issue", Severity.Warning),
+        };
+        var output = T.CaptureOut(() => Reporter.Write(diagnostics, OutputFormat.GitHub, "/repo"));
+        Assert.Contains("%25", output);
+        // The raw % must not survive unescaped in the property section.
+        Assert.DoesNotContain("file=/repo/file%20name.cs,", output);
+    }
+
+    [Fact]
+    public void GitHub_encodes_comma_and_percent_together()
+    {
+        // Mixed case: path contains both ',' and '%'; both must be encoded.
+        var diagnostics = new Diagnostic[]
+        {
+            new("/repo/file%,name.cs", 5, 10, "OP004", "magic", Severity.Warning),
+        };
+        var output = T.CaptureOut(() => Reporter.Write(diagnostics, OutputFormat.GitHub, "/repo"));
+        Assert.Contains("%25", output);
+        Assert.Contains("%2C", output);
+    }
 }
 
 public class PathFilterTests

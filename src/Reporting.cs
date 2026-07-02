@@ -187,11 +187,33 @@ static class Reporter
         foreach (var d in diagnostics)
         {
             var level = d.Severity == Severity.Error ? "error" : "warning";
-            var file = RelativePath(root, d.File);
+            var file = GitHubEscapeProperty(RelativePath(root, d.File));
+            var message = GitHubEscapeData($"[{d.Rule}] {d.Message}");
             Console.WriteLine(
-                $"::{level} file={file},line={d.Line},col={d.Column}::[{d.Rule}] {d.Message}");
+                $"::{level} file={file},line={d.Line},col={d.Column}::{message}");
         }
     }
+
+    // Escape a GitHub Actions workflow command property value per the toolkit spec.
+    // Property values are delimited by ',' (between properties) and ':' (before data),
+    // so those characters — plus '%' (escape prefix), '\r', and '\n' — must be encoded.
+    // '%' must be escaped first to avoid double-encoding subsequent replacements.
+    static string GitHubEscapeProperty(string value) =>
+        value
+            .Replace("%", "%25")
+            .Replace("\r", "%0D")
+            .Replace("\n", "%0A")
+            .Replace(":", "%3A")
+            .Replace(",", "%2C");
+
+    // Escape a GitHub Actions workflow command data value per the toolkit spec.
+    // Data ends at end-of-line, so only '%', '\r', and '\n' need encoding.
+    // '%' must be escaped first to avoid double-encoding subsequent replacements.
+    static string GitHubEscapeData(string value) =>
+        value
+            .Replace("%", "%25")
+            .Replace("\r", "%0D")
+            .Replace("\n", "%0A");
 
     // The shared suite severity ladder: cslint emits error -> high, warning -> low.
     static string Ladder(Severity sev) => sev == Severity.Error ? "high" : "low";
