@@ -410,6 +410,9 @@ sealed class HardcodedSecretRule : IRule
         // A lowercase dotted identifier — reverse-DNS event types / config keys ("tenant.token.create").
         if (v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_'))
             return true;
+        // A lowercase kebab-case identifier — service/token display names ("edge-access", "some-service-name").
+        if (v.Contains('-') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '-' or '_'))
+            return true;
         // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
         if (v.Length <= MaxIdentifierWordLength && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
         return false;

@@ -321,6 +321,48 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST004"));
     }
 
+    // Regression (#21): kebab-case display names like "edge-access" must not be flagged as
+    // hardcoded credentials. The value is a token display name; the real credential lives
+    // elsewhere (e.g. an env var stored hashed). Mirrors the dotted-lowercase arm for
+    // reverse-DNS event types.
+    [Theory]
+    [InlineData("public const string TokenName = \"edge-access\";")]          // token display name (exact dogfood repro)
+    [InlineData("public const string ServiceToken = \"some-service-name\";")]  // multi-word kebab display name
+    public async Task SAST004_does_not_flag_kebab_case_display_names(string member)
+    {
+        var diags = await T.Run(new HardcodedSecretRule(), $"class C {{ {member} }}");
+        Assert.False(diags.Has("SAST004"));
+    }
+
+    // Positive control: a real high-entropy secret literal must still be flagged after the
+    // kebab fix (guards against over-broadening that lets genuine credentials escape).
+    [Fact]
+    public async Task SAST004_still_flags_high_entropy_secret_after_kebab_fix()
+    {
+        var diags = await T.Run(new HardcodedSecretRule(),
+            "class C { void M() { string apiKey = \"sk_live_abc123\"; } }");
+        Assert.True(diags.Has("SAST004"));
+    }
+
+    // Mixed partial-failure: a file with both kebab display-name constants and a real secret —
+    // only the genuine credential must fire.
+    [Fact]
+    public async Task SAST004_mixed_kebab_and_real_secret_flags_only_real_secret()
+    {
+        const string code = """
+            class C
+            {
+                public const string TokenName = "edge-access";
+                public const string ServiceName = "some-service-name";
+                string apiKey = "sk_live_abc123";
+            }
+            """;
+        var diags = await T.Run(new HardcodedSecretRule(), code);
+        var sast004 = diags.Where(d => d.Rule == "SAST004").ToList();
+        // Exactly 1: only the high-entropy apiKey literal, not the two kebab display names.
+        Assert.Single(sast004);
+    }
+
     [Fact]
     public async Task SAST005_flags_fire_and_forget()
     {
