@@ -33,6 +33,13 @@ static class Cli
         if (options.ShowVersion) { PrintVersion(); return 0; }
         if (options.InstallHook) return InstallGitHook(options.Root);
 
+        // --deep without --project silently degraded to syntactic-only analysis; reject it early.
+        if (options.DeepMode && options.ProjectPath == null)
+        {
+            Console.Error.WriteLine("--deep requires --project <path>");
+            return ExitUsageError;
+        }
+
         EnsureMsBuildOrFallback(options);
 
         // Shared .dependably-check config (repo root). CLI flags win: the scan toggles and the
@@ -143,7 +150,7 @@ static class Cli
         var summaryWriter = options.Format == OutputFormat.Human ? Console.Out : Console.Error;
         summaryWriter.WriteLine($"Checked {totalFiles} file{(totalFiles != 1 ? "s" : "")}. " +
                           $"Mode: {ModeLabel(mode)}" +
-                          (options.DeepMode ? " + semantic" : "") + ".");
+                          (options.DeepMode && options.ProjectPath != null ? " + semantic" : "") + ".");
 
         // When the gate trips without any errors, the trigger (warnings, or a count threshold) is
         // not otherwise obvious from the report — say so explicitly.

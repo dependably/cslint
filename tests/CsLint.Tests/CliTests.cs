@@ -560,6 +560,45 @@ public class CliTests
         finally { Directory.Delete(dir, true); }
     }
 
+    // Regression: --deep without --project silently degraded to syntactic-only analysis,
+    // exiting 0 while falsely reporting "Mode: editorconfig + semantic." (ticket #7).
+    [Fact]
+    public void ParseOptions_deep_without_project_leaves_ProjectPath_null()
+    {
+        // The parse itself does not error (OptionError is set downstream in RunAsync); it just
+        // leaves ProjectPath null while DeepMode is true. RunAsync rejects the combination.
+        var o = Cli.ParseOptions(["--deep", "Foo.cs"]);
+        Assert.True(o.DeepMode);
+        Assert.Null(o.ProjectPath);
+        // No OptionError at parse time — the rejection happens in RunAsync.
+        Assert.Null(o.OptionError);
+    }
+
+    [Fact]
+    public async Task RunAsync_deep_without_project_exits_two()
+    {
+        // --deep without --project must exit 2 (usage error), not silently run syntactic-only
+        // and exit 0. This test fails on the old code (which exits 0) and passes on the fix.
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+        try
+        {
+            var output = await CaptureRun(["--global", "--deep", "--root", dir]);
+            Assert.Equal(2, output.Code);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RunAsync_deep_help_shows_help_not_error()
+    {
+        // --deep --help must display help (exit 0), not the "--deep requires --project" error.
+        // The help/version early-returns must take priority over the --deep validation.
+        var output = await CaptureRun(["--deep", "--help"]);
+        Assert.Equal(0, output.Code);
+        Assert.Contains("cslint v4", output.Text);
+    }
+
     record RunResult(int Code, string Text);
 
     static async Task<RunResult> CaptureRun(string[] args)
