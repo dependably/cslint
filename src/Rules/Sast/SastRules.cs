@@ -389,6 +389,12 @@ sealed class HardcodedSecretRule : IRule
             diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
                 $"Possible hardcoded credential in variable '{init.Identifier.Text}'.", Severity.Error));
         }
+        else if (PlaceholderValues.Any(p => value.Equals(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            var loc = init.GetLocation().GetLineSpan();
+            diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
+                $"Placeholder value '{value}' left in source.", Severity.Warning));
+        }
     }
 
     static bool IsEmpty(string v) => v.Replace("*", "").Replace(" ", "").Length == 0;
@@ -410,8 +416,13 @@ sealed class HardcodedSecretRule : IRule
         // A lowercase dotted identifier — reverse-DNS event types / config keys ("tenant.token.create").
         if (v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_'))
             return true;
-        // A lowercase kebab-case identifier — service/token display names ("edge-access", "some-service-name").
-        if (v.Contains('-') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '-' or '_'))
+        // A lowercase kebab-case display name — letters and hyphens only, no digits
+        // ("edge-access", "some-service-name"). Digit-bearing tokens (Slack xoxb-..., UUID-shaped
+        // keys) carry entropy and must not be exempted here. Known placeholder values (e.g.
+        // "your-secret-here") are also excluded so they remain detectable via the credential or
+        // placeholder arms above their callers.
+        if (v.Contains('-') && v.All(c => (char.IsLetter(c) && !char.IsUpper(c)) || c is '-' or '_')
+            && !PlaceholderValues.Any(p => v.Equals(p, StringComparison.OrdinalIgnoreCase)))
             return true;
         // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
         if (v.Length <= MaxIdentifierWordLength && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
