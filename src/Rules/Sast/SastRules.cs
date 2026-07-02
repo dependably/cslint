@@ -155,9 +155,9 @@ sealed class SqlInjectionRule : IRule
     };
 
     // Well-known ADO.NET / ORM command types whose constructor arguments are SQL strings.
-    // CommandDefinition is Dapper's command struct whose first ctor argument is the SQL text;
-    // it does not carry the Command/DataAdapter suffix IsSqlCommandType keys off, so it is
-    // listed explicitly.
+    // Dapper's CommandDefinition struct takes the SQL text as its first constructor argument but
+    // does not carry the Command or DataAdapter suffix that IsSqlCommandType keys off, so we list
+    // it here explicitly.
     static readonly HashSet<string> SqlCommandTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "SqlCommand", "SqliteCommand", "NpgsqlCommand",
@@ -174,66 +174,68 @@ sealed class SqlInjectionRule : IRule
 
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
-        var filePath = unit.Path;
         var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
+        diagnostics.AddRange(ScanInvocations(root, unit.Path));
+        diagnostics.AddRange(ScanConstructors(root, unit.Path));
+        diagnostics.AddRange(ScanCommandTextAssignments(root, unit.Path));
+        return diagnostics;
+    }
 
-        // 1. Method invocations: db.ExecuteSqlRaw($"...{id}"), cmd.ExecuteReader(), etc.
+    // 1. Method invocations: db.ExecuteSqlRaw($"...{id}"), cmd.ExecuteReader(), etc.
+    IEnumerable<Diagnostic> ScanInvocations(SyntaxNode root, string filePath)
+    {
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             var methodName = GetMethodName(invocation);
             if (methodName == null || !DangerousMethods.Contains(methodName)) continue;
 
             var args = invocation.ArgumentList.Arguments;
-            if (args.Count == 0) continue;
+            if (args.Count == 0 || !IsInterpolatedSql(args[0].Expression)) continue;
 
-            if (IsInterpolatedSql(args[0].Expression))
-            {
-                var loc = invocation.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath,
-                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                    $"Possible SQL injection: interpolated string passed to {methodName}(). Use parameterised queries.",
-                    Severity.Error));
-            }
+            var loc = invocation.GetLocation().GetLineSpan();
+            yield return new(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                $"Possible SQL injection: interpolated string passed to {methodName}(). Use parameterised queries.",
+                Severity.Error);
         }
+    }
 
-        // 2. Constructor calls: new SqlCommand($"...{id}") and new($"...{id}") (implicit form).
-        //    Both derive from BaseObjectCreationExpressionSyntax; ArgumentList is nullable there.
+    // 2. Constructor calls: new SqlCommand($"...{id}") and new($"...{id}") (implicit form).
+    //    Both derive from BaseObjectCreationExpressionSyntax; ArgumentList is nullable there.
+    IEnumerable<Diagnostic> ScanConstructors(SyntaxNode root, string filePath)
+    {
         foreach (var creation in root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>())
         {
             var typeName = ResolveCreatedTypeName(creation);
             if (typeName == null || !IsSqlCommandType(typeName)) continue;
 
             var args = creation.ArgumentList?.Arguments;
-            if (args == null || args.Value.Count == 0) continue;
+            if (args == null || args.Value.Count == 0 || !IsInterpolatedSql(args.Value[0].Expression)) continue;
 
-            if (IsInterpolatedSql(args.Value[0].Expression))
-            {
-                var loc = creation.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath,
-                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                    $"Possible SQL injection: interpolated string passed to {typeName} constructor. Use parameterised queries.",
-                    Severity.Error));
-            }
+            var loc = creation.GetLocation().GetLineSpan();
+            yield return new(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                $"Possible SQL injection: interpolated string passed to {typeName} constructor. Use parameterised queries.",
+                Severity.Error);
         }
+    }
 
-        // 3. CommandText assignment: cmd.CommandText = $"...{id}"
+    // 3. CommandText assignment: cmd.CommandText = $"...{id}"
+    IEnumerable<Diagnostic> ScanCommandTextAssignments(SyntaxNode root, string filePath)
+    {
         foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
             if (assignment.Left is not MemberAccessExpressionSyntax mem) continue;
             if (!mem.Name.Identifier.Text.Equals("CommandText", StringComparison.Ordinal)) continue;
+            if (!IsInterpolatedSql(assignment.Right)) continue;
 
-            if (IsInterpolatedSql(assignment.Right))
-            {
-                var loc = assignment.GetLocation().GetLineSpan();
-                diagnostics.Add(new(filePath,
-                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
-                    "Possible SQL injection: interpolated string assigned to CommandText. Use parameterised queries.",
-                    Severity.Error));
-            }
+            var loc = assignment.GetLocation().GetLineSpan();
+            yield return new(filePath,
+                loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                "Possible SQL injection: interpolated string assigned to CommandText. Use parameterised queries.",
+                Severity.Error);
         }
-
-        return diagnostics;
     }
 
     // True when the SQL-argument expression is an interpolated string carrying at least one
@@ -411,23 +413,37 @@ sealed class HardcodedSecretRule : IRule
     {
         var v = value.Trim();
         if (v.Length == 0) return true;
-        if (v.All(c => char.IsDigit(c) || c is '.' or '-' or '_')) return true;     // numeric / versiony
-        if (v.Contains(':') || v.Contains('/') || v.Contains(' ')) return true;     // scope / URI / path
-        // A lowercase dotted identifier — reverse-DNS event types / config keys ("tenant.token.create").
-        if (v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_'))
-            return true;
-        // A lowercase kebab-case display name — letters and hyphens only, no digits
-        // ("edge-access", "some-service-name"). Digit-bearing tokens (Slack xoxb-..., UUID-shaped
-        // keys) carry entropy and must not be exempted here. Known placeholder values (e.g.
-        // "your-secret-here") are also excluded so they remain detectable via the credential or
-        // placeholder arms above their callers.
-        if (v.Contains('-') && v.All(c => (char.IsLetter(c) && !char.IsUpper(c)) || c is '-' or '_')
-            && !PlaceholderValues.Any(p => v.Equals(p, StringComparison.OrdinalIgnoreCase)))
-            return true;
-        // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
-        if (v.Length <= MaxIdentifierWordLength && char.IsUpper(v[0]) && v.All(char.IsLetter)) return true;
+        if (IsNumericOrVersiony(v)) return true;
+        if (IsScopeUriOrPath(v)) return true;
+        if (IsLowercaseDottedIdentifier(v)) return true;
+        if (IsLowercaseKebabDisplayName(v)) return true;
+        if (IsPascalCaseWord(v)) return true;
         return false;
     }
+
+    static bool IsNumericOrVersiony(string v) =>
+        v.All(c => char.IsDigit(c) || c is '.' or '-' or '_');
+
+    // Permission scopes / URIs / paths ("tokens:manage_own", "https://…", "/etc/…").
+    static bool IsScopeUriOrPath(string v) =>
+        v.Contains(':') || v.Contains('/') || v.Contains(' ');
+
+    // A lowercase dotted identifier — reverse-DNS event types / config keys ("tenant.token.create").
+    static bool IsLowercaseDottedIdentifier(string v) =>
+        v.Contains('.') && v.All(c => (char.IsLetterOrDigit(c) && !char.IsUpper(c)) || c is '.' or '-' or '_');
+
+    // A lowercase kebab-case display name — letters and hyphens only, no digits ("edge-access",
+    // "some-service-name"). Digit-bearing tokens (Slack xoxb-…, UUID-shaped keys) carry entropy and
+    // must not be exempted. Known placeholder values ("your-secret-here") are excluded so they
+    // remain detectable via the credential/placeholder arms in the calling checks.
+    static bool IsLowercaseKebabDisplayName(string v) =>
+        v.Contains('-')
+        && v.All(c => (char.IsLetter(c) && !char.IsUpper(c)) || c is '-' or '_')
+        && !PlaceholderValues.Any(p => v.Equals(p, StringComparison.OrdinalIgnoreCase));
+
+    // A bare PascalCase word with no digits or symbols — a scheme/enum identifier, not a key.
+    static bool IsPascalCaseWord(string v) =>
+        v.Length <= MaxIdentifierWordLength && char.IsUpper(v[0]) && v.All(char.IsLetter);
 
     static string? GetAssigneeName(ExpressionSyntax expr) => expr switch
     {

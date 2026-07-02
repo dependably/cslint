@@ -38,7 +38,6 @@ sealed class IndentStyleRule : TextRule
     {
         var expected = config.Properties["indent_style"].ToLowerInvariant();
         var size = GetIndentSize(config.Properties);
-        var indent = new string(' ', size);
         var lines = SplitLines(text);
         bool changed = false;
 

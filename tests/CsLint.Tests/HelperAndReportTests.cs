@@ -422,6 +422,7 @@ public class PathFilterExpandGlobTests : IDisposable
     {
         Directory.SetCurrentDirectory(_savedDir);
         try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
+        GC.SuppressFinalize(this);
     }
 
     // Normalise to absolute path using the current cwd at call time (which is _dir after setup).
