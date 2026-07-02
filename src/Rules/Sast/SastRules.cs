@@ -669,7 +669,6 @@ sealed class DynamicUsageRule : IRule
             // a bare `using dynamic;` (illegal but parseable) as a type position.
             UsingDirectiveSyntax ud => ud.Alias != null && ud.NamespaceOrType == node,
             // LINQ query range-variable type annotations (not the collection expression after 'in')
-            // LINQ query range-variable type annotations (not the collection expression after 'in')
             FromClauseSyntax fc => fc.Type == node,
             JoinClauseSyntax jc => jc.Type == node,
             // Unsafe function pointer parameter: delegate*<dynamic, void>
