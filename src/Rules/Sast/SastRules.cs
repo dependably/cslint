@@ -137,17 +137,32 @@ sealed class SqlInjectionRule : IRule
 
     static readonly HashSet<string> DangerousMethods = new(StringComparer.OrdinalIgnoreCase)
     {
+        // EF Core raw SQL + ADO.NET command execution.
         "ExecuteSqlRaw", "ExecuteSqlRawAsync", "FromSqlRaw", "FromSqlRawAsync",
         "ExecuteNonQuery", "ExecuteScalar", "ExecuteReader",
         "ExecuteNonQueryAsync", "ExecuteScalarAsync", "ExecuteReaderAsync",
         "CreateCommand",
+        // Dapper's IDbConnection extension methods take the SQL as their first argument.
+        // Without these, `conn.QueryAsync($"...{orderBy}...")` was invisible — only the
+        // ExecuteScalar* overloads happened to collide by name with the ADO.NET set above.
+        "Query", "QueryAsync",
+        "QueryFirst", "QueryFirstAsync",
+        "QueryFirstOrDefault", "QueryFirstOrDefaultAsync",
+        "QuerySingle", "QuerySingleAsync",
+        "QuerySingleOrDefault", "QuerySingleOrDefaultAsync",
+        "QueryMultiple", "QueryMultipleAsync",
+        "Execute", "ExecuteAsync",
     };
 
     // Well-known ADO.NET / ORM command types whose constructor arguments are SQL strings.
+    // CommandDefinition is Dapper's command struct whose first ctor argument is the SQL text;
+    // it does not carry the Command/DataAdapter suffix IsSqlCommandType keys off, so it is
+    // listed explicitly.
     static readonly HashSet<string> SqlCommandTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "SqlCommand", "SqliteCommand", "NpgsqlCommand",
         "MySqlCommand", "OracleCommand", "OdbcCommand", "OleDbCommand",
+        "CommandDefinition",
     };
 
     // Falls back to a suffix heuristic so that less-common drivers (e.g. SnowflakeCommand,
@@ -172,8 +187,7 @@ sealed class SqlInjectionRule : IRule
             var args = invocation.ArgumentList.Arguments;
             if (args.Count == 0) continue;
 
-            if (args[0].Expression is InterpolatedStringExpressionSyntax interpolated &&
-                interpolated.Contents.OfType<InterpolationSyntax>().Any())
+            if (IsInterpolatedSql(args[0].Expression))
             {
                 var loc = invocation.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -193,8 +207,7 @@ sealed class SqlInjectionRule : IRule
             var args = creation.ArgumentList?.Arguments;
             if (args == null || args.Value.Count == 0) continue;
 
-            if (args.Value[0].Expression is InterpolatedStringExpressionSyntax interpolated &&
-                interpolated.Contents.OfType<InterpolationSyntax>().Any())
+            if (IsInterpolatedSql(args.Value[0].Expression))
             {
                 var loc = creation.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -210,8 +223,7 @@ sealed class SqlInjectionRule : IRule
             if (assignment.Left is not MemberAccessExpressionSyntax mem) continue;
             if (!mem.Name.Identifier.Text.Equals("CommandText", StringComparison.Ordinal)) continue;
 
-            if (assignment.Right is InterpolatedStringExpressionSyntax interpolated &&
-                interpolated.Contents.OfType<InterpolationSyntax>().Any())
+            if (IsInterpolatedSql(assignment.Right))
             {
                 var loc = assignment.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -223,6 +235,49 @@ sealed class SqlInjectionRule : IRule
 
         return diagnostics;
     }
+
+    // True when the SQL-argument expression is an interpolated string carrying at least one
+    // interpolation hole — either written directly at the sink, or assigned to a same-method
+    // local that then reaches the sink. A raw literal (parameterised query) or an interpolated
+    // string with no holes is never a match.
+    static bool IsInterpolatedSql(ExpressionSyntax? expr) =>
+        HasInterpolationHole(expr) ||
+        (expr is IdentifierNameSyntax id && LocalAssignedInterpolatedSql(id));
+
+    static bool HasInterpolationHole(ExpressionSyntax? expr) =>
+        expr is InterpolatedStringExpressionSyntax interpolated &&
+        interpolated.Contents.OfType<InterpolationSyntax>().Any();
+
+    // Scoped, single-method local-variable flow: does the local named by `id` get a direct
+    // assignment of an interpolated SQL string (with holes) somewhere in the SAME enclosing
+    // method/accessor/lambda body? Deliberately shallow — no cross-method dataflow, no aliasing.
+    // Covers `string sql = $"...{x}..."; conn.QueryAsync(sql, ...)` and later `sql = $"...{x}...";`.
+    static bool LocalAssignedInterpolatedSql(IdentifierNameSyntax id)
+    {
+        var name = id.Identifier.Text;
+        var scope = EnclosingBody(id);
+        if (scope == null) return false;
+
+        foreach (var node in scope.DescendantNodes())
+        {
+            switch (node)
+            {
+                case VariableDeclaratorSyntax d
+                    when d.Identifier.Text == name && HasInterpolationHole(d.Initializer?.Value):
+                    return true;
+                case AssignmentExpressionSyntax { Left: IdentifierNameSyntax lhs } a
+                    when lhs.Identifier.Text == name && HasInterpolationHole(a.Right):
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    // Nearest function-like ancestor that establishes a local-variable scope.
+    static SyntaxNode? EnclosingBody(SyntaxNode node) =>
+        node.Ancestors().FirstOrDefault(a =>
+            a is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax
+              or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax);
 
     // Returns the simple type name for explicit new T(...) or resolves it from the declared
     // variable type for implicit new(...).
