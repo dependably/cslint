@@ -46,14 +46,25 @@ sealed class IndentStyleRule : TextRule
         {
             if (expected == "space" && lines[i].StartsWith('\t'))
             {
-                lines[i] = lines[i].Replace("\t", indent);
+                // Count only the leading tab run so embedded tabs (string literals,
+                // comments, mid-line alignment) are not corrupted.
+                int j = 0;
+                while (j < lines[i].Length && lines[i][j] == '\t') j++;
+                lines[i] = new string(' ', j * size) + lines[i][j..];
                 changed = true;
             }
             else if (expected == "tab")
             {
                 var leading = CountLeadingSpaces(lines[i]);
                 var tabs = leading / size;
-                if (tabs > 0) { lines[i] = new string('\t', tabs) + lines[i][leading..]; changed = true; }
+                // Preserve remainder spaces (leading % size) so partial-indent
+                // alignment is not silently dropped.
+                var remainder = leading % size;
+                if (tabs > 0)
+                {
+                    lines[i] = new string('\t', tabs) + new string(' ', remainder) + lines[i][leading..];
+                    changed = true;
+                }
             }
         }
 

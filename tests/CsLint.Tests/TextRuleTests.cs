@@ -64,6 +64,46 @@ public class TextRuleTests
         finally { File.Delete(path); }
     }
 
+    // Regression: Replace("\t", indent) corrupted embedded literal tabs in verbatim strings,
+    // char literals, comments, and mid-line alignment. Only the leading tab run should be replaced.
+    [Fact]
+    public async Task EC001_fix_tab_to_space_preserves_embedded_literal_tab_in_verbatim_string()
+    {
+        // The line starts with a tab (leading indent) and contains a second literal tab
+        // inside a verbatim string.  Only the first (leading) tab should become spaces.
+        var path = T.WriteCs("\tvar s = @\"a\tb\";\n");
+        try
+        {
+            var changed = await new IndentStyleRule().FixAsync(path,
+                T.Cfg(("indent_style", "space"), ("indent_size", "4")));
+            Assert.True(changed);
+            var result = File.ReadAllText(path);
+            // Leading tab → 4 spaces
+            Assert.StartsWith("    var s = @\"a\t", result);
+            // Embedded tab inside the string is untouched
+            Assert.Contains("\t", result.Substring(4));
+        }
+        finally { File.Delete(path); }
+    }
+
+    // Regression: space→tab conversion discarded remainder spaces (leading % size),
+    // e.g. 6 leading spaces with size=4 produced 1 tab, dropping the extra 2 spaces.
+    [Fact]
+    public async Task EC001_fix_space_to_tab_preserves_remainder_spaces()
+    {
+        // 6 leading spaces with tab_width=4 → 1 tab + 2 remainder spaces
+        var path = T.WriteCs("      int x = 1;\n");
+        try
+        {
+            var changed = await new IndentStyleRule().FixAsync(path,
+                T.Cfg(("indent_style", "tab"), ("tab_width", "4")));
+            Assert.True(changed);
+            var result = File.ReadAllText(path);
+            Assert.StartsWith("\t  int", result);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public async Task EC002_flags_trailing_whitespace()
     {
