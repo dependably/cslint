@@ -503,6 +503,53 @@ public class CliTests
         Assert.Equal(2, output.Code);
     }
 
+    // Bug #23 follow-up (Finding 1): Info gate counting.
+    // An Info finding (NamingRule with suggestion severity) must NOT trip --fail-on severity=warning
+    // but MUST trip --fail-on severity=info. Both tests fail on the old code (pre-fix) because
+    // MaxSeverityRank returned -1 for info-only runs, so severity=info gated on -1 >= 0 => false.
+    static string InfoFindingEditorConfig() =>
+        """
+        root = true
+        [*.cs]
+        dotnet_naming_rule.methods.symbols = method_group
+        dotnet_naming_rule.methods.style = pascal
+        dotnet_naming_rule.methods.severity = suggestion
+        dotnet_naming_symbols.method_group.applicable_kinds = method
+        dotnet_naming_style.pascal.capitalization = pascal_case
+        """;
+
+    [Fact]
+    public async Task RunAsync_info_finding_does_not_trip_severity_warning_gate()
+    {
+        // An Info (suggestion) finding must be below the warning gate.
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, ".editorconfig"), InfoFindingEditorConfig());
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class C { void lowercaseMethod() { } }");
+        try
+        {
+            var output = await CaptureRun(["--global", "--fail-on", "severity=warning", "--root", dir]);
+            Assert.Equal(0, output.Code);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RunAsync_info_finding_trips_severity_info_gate()
+    {
+        // An Info (suggestion) finding must trip --fail-on severity=info (at-or-above info=0).
+        // This test fails on the old code: MaxSeverityRank returned -1 (no errors/warnings),
+        // so -1 >= 0 was false and the gate never fired.
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, ".editorconfig"), InfoFindingEditorConfig());
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class C { void lowercaseMethod() { } }");
+        try
+        {
+            var output = await CaptureRun(["--global", "--fail-on", "severity=info", "--root", dir]);
+            Assert.Equal(1, output.Code);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public async Task RunAsync_explain_prints_rules()
     {

@@ -91,6 +91,54 @@ public class SemanticEngineTests
         Assert.True(ok || error != null);
     }
 
+    // Bug #23 follow-up (Finding 2): SemanticEngine must align with LintEngine — both must map
+    // dotnet_diagnostic.<Id>.severity = suggestion to Severity.Info (not Severity.Warning).
+
+    [Fact]
+    public void MapEditorConfigSeverity_suggestion_yields_Info()
+    {
+        // LintEngine.ApplySeverityOverride already maps suggestion → Info (existing tests).
+        // SemanticEngine.BuildSeverityOverrides must produce the same result via MapEditorConfigSeverity.
+        // This test fails when the switch maps suggestion to Warning instead of Info.
+        Assert.Equal(Severity.Info, CsLint.SemanticEngine.MapEditorConfigSeverity("suggestion"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_info_yields_Info()
+    {
+        Assert.Equal(Severity.Info, CsLint.SemanticEngine.MapEditorConfigSeverity("info"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_hint_yields_Info()
+    {
+        Assert.Equal(Severity.Info, CsLint.SemanticEngine.MapEditorConfigSeverity("hint"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_warning_yields_Warning()
+    {
+        Assert.Equal(Severity.Warning, CsLint.SemanticEngine.MapEditorConfigSeverity("warning"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_error_yields_Error()
+    {
+        Assert.Equal(Severity.Error, CsLint.SemanticEngine.MapEditorConfigSeverity("error"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_none_yields_null()
+    {
+        Assert.Null(CsLint.SemanticEngine.MapEditorConfigSeverity("none"));
+    }
+
+    [Fact]
+    public void MapEditorConfigSeverity_silent_yields_null()
+    {
+        Assert.Null(CsLint.SemanticEngine.MapEditorConfigSeverity("silent"));
+    }
+
     // ── CheckUnusedUsings ──────────────────────────────────────────────────────
 
     [Fact]
