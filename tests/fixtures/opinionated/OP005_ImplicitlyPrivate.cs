@@ -5,8 +5,10 @@ namespace Fixtures.Opinionated;
 // not API surface, and cannot be the flag-argument smell.
 class ImplicitlyPrivateFixture
 {
+    // No other findings may fire in this fixture: the harness's check_absent greps the raw
+    // output for "OP005", and any finding at all echoes this OP005-named file path into it.
     void Helper(bool active)
     {
-        Console.WriteLine(active);
+        _ = active;
     }
 }
