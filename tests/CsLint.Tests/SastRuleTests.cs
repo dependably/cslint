@@ -869,9 +869,9 @@ public class SastRuleTests
         //   Line 06 — join dynamic b in ys                  → JoinClauseSyntax.Type                 (flag)
         //   Line 09 — x is dynamic                          → BinaryExpressionSyntax.Right (IsExpr) (flag)
         //   Line 12 — delegate*<dynamic, void>              → FunctionPointerParameterSyntax.Type   (flag)
-        //   Line 15 — dynamic is string  (LEFT operand)     → NOT flagged (Left slot, not Right)
-        //   Line 16 — from x in dynamic  (collection expr)  → NOT flagged (Expression slot, not Type)
-        //   Line 17 — join b in dynamic  (collection expr)  → NOT flagged (InExpression slot, not Type)
+        //   Clean() — dynamic is string  (LEFT operand)     → NOT flagged (Left slot, not Right)
+        //   Clean() — from x in dynamic  (collection expr)  → NOT flagged (Expression slot, not Type)
+        //   Clean() — join b in dynamic  (collection expr)  → NOT flagged (InExpression slot, not Type)
         // Total expected: 5
         const string code = """
             using D = dynamic;
@@ -887,12 +887,13 @@ public class SastRuleTests
 
                 unsafe void FnPtr() { delegate*<dynamic, void> fp = null; }
 
-                // Non-type positions — must NOT flag
-                void Clean(object dynamic, object[] xs, object[] ys)
+                // Non-type positions — must NOT flag: `dynamic` here is a parameter NAME
+                // appearing in the is-expression LEFT slot and the query COLLECTION slots.
+                void Clean(object[] dynamic, object[] xs)
                 {
                     var r = dynamic is string;
-                    var q3 = from x in xs select x;
-                    var q4 = from x in xs join b in ys on x equals b select x;
+                    var q3 = from x in dynamic select x;
+                    var q4 = from x in xs join b in dynamic on x equals b select x;
                 }
             }
             """;
