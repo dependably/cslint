@@ -114,6 +114,92 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST003"));
     }
 
+    // Regression: new SqlCommand($"...{id}") must be flagged — was missed because the rule
+    // only examined InvocationExpressionSyntax, not ObjectCreationExpressionSyntax.
+    [Fact]
+    public async Task SAST003_flags_sqlcommand_constructor_with_interpolated_string()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string userId) { var cmd = new SqlCommand($\"SELECT * FROM Users WHERE Id = {userId}\"); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Regression: implicit new($"...{id}") on a SqlCommand variable must also be flagged.
+    [Fact]
+    public async Task SAST003_flags_implicit_sqlcommand_constructor_with_interpolated_string()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string userId) { SqlCommand cmd = new($\"DELETE FROM Users WHERE Id = {userId}\"); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Negative: constructor with a constant SQL string — no interpolation holes, must not flag.
+    [Fact]
+    public async Task SAST003_clean_sqlcommand_constructor_with_constant_string()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M() { var cmd = new SqlCommand(\"SELECT 1\"); } }");
+        Assert.False(diags.Has("SAST003"));
+    }
+
+    // Negative: a non-command constructor receiving an interpolated string must not flag
+    // (e.g. ArgumentException, StringBuilder, etc.).
+    [Fact]
+    public async Task SAST003_clean_non_command_constructor_with_interpolated_string()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string name) { throw new ArgumentException($\"bad value: {name}\"); } }");
+        Assert.False(diags.Has("SAST003"));
+    }
+
+    // Regression: cmd.CommandText = $"...{id}" assignment must be flagged.
+    [Fact]
+    public async Task SAST003_flags_commandtext_interpolated_assignment()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(SqlCommand cmd, string userId) { cmd.CommandText = $\"SELECT * FROM Users WHERE Id = {userId}\"; } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Negative: cmd.CommandText with a constant string must not flag.
+    [Fact]
+    public async Task SAST003_clean_commandtext_constant_assignment()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(SqlCommand cmd) { cmd.CommandText = \"SELECT 1\"; } }");
+        Assert.False(diags.Has("SAST003"));
+    }
+
+    // Mixed partial-failure: a file containing both safe and unsafe patterns — only the unsafe
+    // ones must be flagged, ensuring no false negatives or false positives bleed through.
+    [Fact]
+    public async Task SAST003_mixed_file_flags_only_unsafe_patterns()
+    {
+        const string code = """
+            class C
+            {
+                void Safe(string userId)
+                {
+                    db.ExecuteSqlRaw("SELECT * FROM Users WHERE Id = {0}", userId);
+                    var safe = new SqlCommand("SELECT 1");
+                    SqlCommand safeCtor = new("SELECT 1");
+                }
+
+                void Unsafe(string userId)
+                {
+                    db.ExecuteSqlRaw($"SELECT * FROM Users WHERE Id = {userId}");
+                    var cmd1 = new SqlCommand($"SELECT * FROM Users WHERE Id = {userId}");
+                    SqlCommand cmd2 = new($"DELETE FROM Users WHERE Id = {userId}");
+                    cmd1.CommandText = $"UPDATE Users SET Name='x' WHERE Id = {userId}";
+                }
+            }
+            """;
+        var diags = await T.Run(new SqlInjectionRule(), code);
+        // 4 unsafe patterns must all be detected
+        var sast003 = diags.Where(d => d.Rule == "SAST003").ToList();
+        Assert.Equal(4, sast003.Count);
+    }
+
     [Fact]
     public async Task SAST004_flags_hardcoded_secret_variable()
     {
