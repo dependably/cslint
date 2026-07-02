@@ -174,4 +174,87 @@ public class SemanticEngineTests
             T.Cfg(("dotnet_diagnostic.IDE0005.severity", "warning")));
         Assert.Contains(diags, d => d.Rule == "IDE0005" && d.Line == 1);
     }
+
+    // ── Fix #12: Case-sensitive boolean value checks ───────────────────────────
+    // These tests fail on the old code (which used raw .Contains("true")) because
+    // "True" does not contain lowercase "true" (ordinal comparison).
+
+    [Fact]
+    public void CheckReadonlyFields_respects_TitleCase_True()
+    {
+        // "True" (capital T) must activate the rule — old code silently disabled it.
+        var (root, model) = Compile(
+            "class C { private int x; public C() { x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckReadonlyFields(
+            "C.cs", root, model, T.Cfg(("dotnet_style_readonly_field", "True")));
+        Assert.Contains(diags, d => d.Rule == "CS033-S");
+    }
+
+    [Fact]
+    public void CheckReadonlyFields_respects_value_with_severity_suffix()
+    {
+        // "true:warning" must activate the rule (StyleHelper strips the suffix).
+        var (root, model) = Compile(
+            "class C { private int x; public C() { x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckReadonlyFields(
+            "C.cs", root, model,
+            T.Cfg(("dotnet_style_readonly_field", "true:warning")));
+        Assert.Contains(diags, d => d.Rule == "CS033-S");
+    }
+
+    [Fact]
+    public void CheckReadonlyFields_suppressed_by_none_suffix()
+    {
+        // "true:none" must suppress the rule (StyleHelper honors :none).
+        var (root, model) = Compile(
+            "class C { private int x; public C() { x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckReadonlyFields(
+            "C.cs", root, model,
+            T.Cfg(("dotnet_style_readonly_field", "true:none")));
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void CheckVarStyle_varForBuiltin_respects_TitleCase_True()
+    {
+        // "True" (capital T) must activate csharp_style_var_for_built_in_types.
+        var (root, model) = Compile("class C { void M() { int x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckVarStyle(
+            "C.cs", root, model,
+            T.Cfg(("csharp_style_var_for_built_in_types", "True")));
+        Assert.Contains(diags, d => d.Rule == "CS010-S");
+    }
+
+    [Fact]
+    public void CheckVarStyle_varWhenApparent_respects_TitleCase_True()
+    {
+        // "True" (capital T) must activate csharp_style_var_when_type_is_apparent.
+        var (root, model) = Compile("class C { void M() { C x = new C(); } }");
+        var diags = CsLint.SemanticEngine.CheckVarStyle(
+            "C.cs", root, model,
+            T.Cfg(("csharp_style_var_when_type_is_apparent", "True")));
+        Assert.Contains(diags, d => d.Rule == "CS010-S");
+    }
+
+    [Fact]
+    public void CheckVarStyle_varForBuiltin_respects_severity_suffix()
+    {
+        // "true:warning" must activate the rule.
+        var (root, model) = Compile("class C { void M() { int x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckVarStyle(
+            "C.cs", root, model,
+            T.Cfg(("csharp_style_var_for_built_in_types", "true:warning")));
+        Assert.Contains(diags, d => d.Rule == "CS010-S");
+    }
+
+    [Fact]
+    public void CheckVarStyle_varForBuiltin_suppressed_by_none_suffix()
+    {
+        // "true:none" must suppress the rule.
+        var (root, model) = Compile("class C { void M() { int x = 1; } }");
+        var diags = CsLint.SemanticEngine.CheckVarStyle(
+            "C.cs", root, model,
+            T.Cfg(("csharp_style_var_for_built_in_types", "true:none")));
+        Assert.Empty(diags);
+    }
 }
