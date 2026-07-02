@@ -124,6 +124,105 @@ public class CliTests
         Assert.True(Cli.ParseOptions(["--install-hook"]).InstallHook);
     }
 
+    // Fix #5: a value option that appears as the last argument (with no following value) must
+    // record an OptionError (exit 2) instead of silently ignoring the option.
+    [Fact]
+    public void ParseOptions_trailing_value_option_without_value_is_a_usage_error()
+    {
+        // --project as the final arg: ProjectPath must not be set, and OptionError must be recorded.
+        var project = Cli.ParseOptions(["--project"]);
+        Assert.NotNull(project.OptionError);
+        Assert.Null(project.ProjectPath);
+
+        // Short form -p behaves the same.
+        var projectShort = Cli.ParseOptions(["-p"]);
+        Assert.NotNull(projectShort.OptionError);
+
+        // --fail-on as the final arg: FailOn must be empty, OptionError must be recorded.
+        // (Without this fix, FailOn stays empty and ApplyConfig silently substitutes the default
+        // gate, masking a gate misconfiguration in CI.)
+        var failOn = Cli.ParseOptions(["--fail-on"]);
+        Assert.NotNull(failOn.OptionError);
+        Assert.Empty(failOn.FailOn);
+
+        // --exclude as the final arg: Exclude must be empty, OptionError must be recorded.
+        var exclude = Cli.ParseOptions(["--exclude"]);
+        Assert.NotNull(exclude.OptionError);
+        Assert.Empty(exclude.Exclude);
+
+        // --format as the final arg: Format must remain default, OptionError must be recorded.
+        var format = Cli.ParseOptions(["--format"]);
+        Assert.NotNull(format.OptionError);
+        Assert.Equal(OutputFormat.Human, format.Format);
+
+        // --root / -r as the final arg.
+        var root = Cli.ParseOptions(["--root"]);
+        Assert.NotNull(root.OptionError);
+
+        var rootShort = Cli.ParseOptions(["-r"]);
+        Assert.NotNull(rootShort.OptionError);
+
+        // --config as the final arg.
+        var config = Cli.ParseOptions(["--config"]);
+        Assert.NotNull(config.OptionError);
+
+        // --explain as the final arg.
+        var explain = Cli.ParseOptions(["--explain"]);
+        Assert.NotNull(explain.OptionError);
+    }
+
+    // Fix #5 (adjacent bug): --format with an unrecognized value must record OptionError (exit 2)
+    // instead of silently falling back to human output.
+    [Fact]
+    public void ParseOptions_invalid_format_value_is_a_usage_error()
+    {
+        var o = Cli.ParseOptions(["--format", "bogus"]);
+        Assert.NotNull(o.OptionError);
+        // The format must not have been changed from the default.
+        Assert.Equal(OutputFormat.Human, o.Format);
+
+        // Valid values must still work without error.
+        Assert.Null(Cli.ParseOptions(["--format", "json"]).OptionError);
+        Assert.Null(Cli.ParseOptions(["--format", "github"]).OptionError);
+        Assert.Null(Cli.ParseOptions(["--format", "human"]).OptionError);
+        Assert.Null(Cli.ParseOptions(["-f", "json"]).OptionError);
+    }
+
+    // Fix #5: the error message must name the offending option.
+    [Fact]
+    public void ParseOptions_trailing_value_option_error_message_names_the_option()
+    {
+        var o = Cli.ParseOptions(["--project"]);
+        Assert.NotNull(o.OptionError);
+        Assert.Contains("--project", o.OptionError);
+
+        var o2 = Cli.ParseOptions(["--fail-on"]);
+        Assert.NotNull(o2.OptionError);
+        Assert.Contains("--fail-on", o2.OptionError);
+    }
+
+    // Fix #5: RunAsync must return exit code 2 when a value option has no value.
+    [Fact]
+    public async Task RunAsync_trailing_value_option_exits_two()
+    {
+        var output = await CaptureRun(["--project"]);
+        Assert.Equal(2, output.Code);
+
+        var output2 = await CaptureRun(["--fail-on"]);
+        Assert.Equal(2, output2.Code);
+
+        var output3 = await CaptureRun(["--format"]);
+        Assert.Equal(2, output3.Code);
+    }
+
+    // Fix #5 (adjacent bug): RunAsync must return exit code 2 for an invalid --format value.
+    [Fact]
+    public async Task RunAsync_invalid_format_value_exits_two()
+    {
+        var output = await CaptureRun(["--format", "bogus"]);
+        Assert.Equal(2, output.Code);
+    }
+
     [Fact]
     public void ParseOptions_version_is_a_recognized_flag()
     {

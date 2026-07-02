@@ -415,7 +415,10 @@ static class Cli
 
     static void SetFormat(CliOptions opts, string value)
     {
-        if (Enum.TryParse<OutputFormat>(value, true, out var fmt)) opts.Format = fmt;
+        if (Enum.TryParse<OutputFormat>(value, true, out var fmt))
+            opts.Format = fmt;
+        else
+            opts.OptionError ??= $"invalid --format value '{value}' (expected human|json|github)";
     }
 
     // The shared suite severity ladder (info=0 .. critical=4). cslint itself only emits two of
@@ -480,7 +483,12 @@ static class Cli
     {
         if (ValueOptions.TryGetValue(args[i], out var apply))
         {
-            if (++i < args.Length) apply(opts, args[i]);
+            if (++i >= args.Length)
+            {
+                opts.OptionError ??= $"option '{args[i - 1]}' requires a value";
+                return i;
+            }
+            apply(opts, args[i]);
             return i;
         }
 
