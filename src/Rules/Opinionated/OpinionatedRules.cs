@@ -23,8 +23,19 @@ sealed class MagicNumberRule : IRule
     public RuleCategory Category => RuleCategory.Opinionated;
     public bool AppliesTo(FileConfig config) => _config.FlagMagicNumbers;
 
-    static readonly HashSet<string> AllowedValues = new(StringComparer.Ordinal)
-        { "0", "1", "-1", "2", "100", "1000" };
+    // Numeric values that are universally understood and need no named constant.
+    // Matching is numeric (not textual) so that float/decimal spellings such as 1.0 or 1f
+    // are treated as equivalent to their integer counterparts.
+    static readonly HashSet<double> AllowedNumerics = new() { 0.0, 1.0, -1.0, 2.0, 100.0, 1000.0 };
+
+    static bool IsAllowedValue(string tokenText)
+    {
+        // Strip the standard C# numeric-literal suffixes before parsing.
+        var s = tokenText.TrimEnd('f', 'F', 'd', 'D', 'm', 'M', 'l', 'L', 'u', 'U');
+        return double.TryParse(s, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var v)
+            && AllowedNumerics.Contains(v);
+    }
 
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
@@ -36,9 +47,9 @@ sealed class MagicNumberRule : IRule
         {
             if (!literal.IsKind(SyntaxKind.NumericLiteralExpression)) continue;
             var text = literal.Token.Text;
-            if (AllowedValues.Contains(text)) continue;
+            if (IsAllowedValue(text)) continue;
             if (IsInConstDeclaration(literal) || IsInAttributeArgument(literal) || IsInEnumMember(literal)
-                || IsInMemberInitializer(literal)) continue;
+                || IsInMemberInitializer(literal) || IsInNamedArgument(literal)) continue;
 
             var loc = literal.GetLocation().GetLineSpan();
             diagnostics.Add(new(filePath,
@@ -82,6 +93,12 @@ sealed class MagicNumberRule : IRule
         }
         return false;
     }
+
+    // A literal passed as a named argument is already self-documenting through the parameter name
+    // — e.g. `BCrypt.HashPassword(password, workFactor: 12)`. Positional arguments (where the
+    // intent is implicit) are still flagged.
+    static bool IsInNamedArgument(SyntaxNode node) =>
+        node.Ancestors().OfType<ArgumentSyntax>().Any(a => a.NameColon != null);
 }
 
 sealed class BooleanParameterRule : IRule
