@@ -185,17 +185,18 @@ sealed class BooleanParameterRule : IRule
         // Implicit implementations only exist in class/struct/record bodies.
         if (method.Parent is InterfaceDeclarationSyntax) return false;
 
-        var baseList = method.Parent switch
-        {
-            ClassDeclarationSyntax cls => cls.BaseList,
-            StructDeclarationSyntax str => str.BaseList,
-            RecordDeclarationSyntax rec => rec.BaseList,
-            _ => null
-        };
-
+        var baseList = (method.Parent as TypeDeclarationSyntax)?.BaseList;
         if (baseList is null) return false;
 
-        // Collect simple names of base types that look like interfaces (I + uppercase initial).
+        var interfaceNames = CollectInterfaceBaseNames(baseList);
+        if (interfaceNames.Count == 0) return false;
+
+        return HasMatchingLocalInterfaceMethod(method, root, interfaceNames);
+    }
+
+    // Simple names of base types that look like interfaces (I + uppercase initial).
+    static HashSet<string> CollectInterfaceBaseNames(BaseListSyntax baseList)
+    {
         var interfaceNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var baseType in baseList.Types)
         {
@@ -203,13 +204,18 @@ sealed class BooleanParameterRule : IRule
             if (simple.Length >= 2 && simple[0] == 'I' && char.IsUpper(simple[1]))
                 interfaceNames.Add(simple);
         }
+        return interfaceNames;
+    }
 
-        if (interfaceNames.Count == 0) return false;
-
+    // True when a locally-declared interface in interfaceNames declares a method matching this
+    // one's name, parameter count, AND parameter types (normalized for nullability). Matching by
+    // type prevents suppressing unrelated bool-flag overloads that share a name and arity.
+    static bool HasMatchingLocalInterfaceMethod(
+        MethodDeclarationSyntax method, SyntaxNode root, HashSet<string> interfaceNames)
+    {
         var methodName = method.Identifier.Text;
         var paramCount = method.ParameterList.Parameters.Count;
 
-        // Look for a matching method in a locally-visible interface declaration.
         foreach (var iface in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>())
         {
             if (!interfaceNames.Contains(iface.Identifier.Text)) continue;
