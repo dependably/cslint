@@ -121,7 +121,7 @@ sealed class BooleanParameterRule : IRule
 
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
-            if (!DeclaresOwnSignature(method)) continue;
+            if (!DeclaresOwnSignature(method, root)) continue;
 
             foreach (var param in method.ParameterList.Parameters)
             {
@@ -144,7 +144,15 @@ sealed class BooleanParameterRule : IRule
     // A method with no accessibility modifier in a class or struct is implicitly private and is also
     // excluded; however, a method with no modifier in an interface is implicitly public API surface
     // and is still flagged.
-    static bool DeclaresOwnSignature(MethodDeclarationSyntax method)
+    // Implicit interface implementations are excluded in two ways:
+    //   (a) In-file lookup: when the interface is declared in the same compilation unit with a
+    //       method matching by name and parameter types.
+    //   (b) Well-known contract heuristic: ASP.NET Identity store setters (Set*Async with a bool
+    //       parameter on a class implementing an I*Store interface) whose bool is dictated by the
+    //       external framework contract.
+    // Implementations of interfaces from external assemblies not covered by the heuristic require
+    // semantic analysis; use dotnet_diagnostic.OP005.severity = none in .editorconfig for those.
+    static bool DeclaresOwnSignature(MethodDeclarationSyntax method, SyntaxNode root)
     {
         if (method.Modifiers.Any(SyntaxKind.PrivateKeyword)) return false;
         if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)) return false;
@@ -158,7 +166,137 @@ sealed class BooleanParameterRule : IRule
         if (!hasAccessibilityModifier && method.Parent is not InterfaceDeclarationSyntax)
             return false;
 
+        // (a) In-file interface lookup: signature matches an interface declared in this file.
+        if (IsImplicitImplementationOfLocalInterface(method, root)) return false;
+
+        // (b) Well-known contract: ASP.NET Identity store setter shapes.
+        if (IsKnownIdentityStoreContractMethod(method)) return false;
+
         return true;
+    }
+
+    // Returns true when the containing type lists an interface (by the I[A-Z] naming convention)
+    // in its base list AND that interface is declared in the same compilation unit with a method
+    // matching this one's name, parameter count, AND parameter types (normalized for nullability).
+    // Matching by type prevents suppressing unrelated bool-flag overloads that share a name and
+    // arity with an interface method but have different parameter types.
+    static bool IsImplicitImplementationOfLocalInterface(MethodDeclarationSyntax method, SyntaxNode root)
+    {
+        // Implicit implementations only exist in class/struct/record bodies.
+        if (method.Parent is InterfaceDeclarationSyntax) return false;
+
+        var baseList = method.Parent switch
+        {
+            ClassDeclarationSyntax cls => cls.BaseList,
+            StructDeclarationSyntax str => str.BaseList,
+            RecordDeclarationSyntax rec => rec.BaseList,
+            _ => null
+        };
+
+        if (baseList is null) return false;
+
+        // Collect simple names of base types that look like interfaces (I + uppercase initial).
+        var interfaceNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var baseType in baseList.Types)
+        {
+            var simple = ExtractSimpleName(baseType.Type.ToString());
+            if (simple.Length >= 2 && simple[0] == 'I' && char.IsUpper(simple[1]))
+                interfaceNames.Add(simple);
+        }
+
+        if (interfaceNames.Count == 0) return false;
+
+        var methodName = method.Identifier.Text;
+        var paramCount = method.ParameterList.Parameters.Count;
+
+        // Look for a matching method in a locally-visible interface declaration.
+        foreach (var iface in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>())
+        {
+            if (!interfaceNames.Contains(iface.Identifier.Text)) continue;
+            foreach (var ifaceMethod in iface.Members.OfType<MethodDeclarationSyntax>())
+            {
+                if (ifaceMethod.Identifier.Text == methodName
+                    && ifaceMethod.ParameterList.Parameters.Count == paramCount
+                    && ParameterTypesMatch(method.ParameterList.Parameters, ifaceMethod.ParameterList.Parameters))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Compares parameter types position-by-position, normalizing away trailing '?' (nullability
+    // annotations) so that `string?` and `string` are treated as equivalent in this context.
+    static bool ParameterTypesMatch(
+        SeparatedSyntaxList<ParameterSyntax> classParams,
+        SeparatedSyntaxList<ParameterSyntax> ifaceParams)
+    {
+        for (var i = 0; i < classParams.Count; i++)
+        {
+            var cp = NormalizeTypeName(classParams[i].Type?.ToString() ?? "");
+            var ip = NormalizeTypeName(ifaceParams[i].Type?.ToString() ?? "");
+            if (!string.Equals(cp, ip, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
+
+    static string NormalizeTypeName(string typeName) =>
+        typeName.EndsWith('?') ? typeName[..^1] : typeName;
+
+    // The closed set of ASP.NET Identity store bool-setter method names whose bool parameters are
+    // dictated by the framework contract, not freely chosen by the implementing class.
+    // Sources: IUserEmailStore, IUserPhoneNumberStore, IUserTwoFactorStore, IUserLockoutStore.
+    static readonly HashSet<string> KnownIdentityStoreBoolSetters =
+    [
+        "SetEmailConfirmedAsync",
+        "SetPhoneNumberConfirmedAsync",
+        "SetTwoFactorEnabledAsync",
+        "SetLockoutEnabledAsync",
+    ];
+
+    // Returns true when the method is one of the well-known ASP.NET Identity store bool setters
+    // on a class/struct whose base list includes at least one I*Store interface name. Both
+    // conditions must hold: the exact method name must appear in KnownIdentityStoreBoolSetters
+    // (a closed set) AND the containing type must list an I*Store in its base list. This prevents
+    // suppressing unrelated Set*Async(bool) methods on user-defined stores (e.g. IEventStore,
+    // IDocumentStore) that happen to share the naming pattern.
+    static bool IsKnownIdentityStoreContractMethod(MethodDeclarationSyntax method)
+    {
+        var name = method.Identifier.Text;
+        if (!KnownIdentityStoreBoolSetters.Contains(name)) return false;
+
+        // Must carry at least one by-value bool parameter (the one that would be flagged).
+        if (!method.ParameterList.Parameters.Any(IsFlagParameter)) return false;
+
+        // Containing type must implement at least one I*Store interface.
+        var baseList = method.Parent switch
+        {
+            ClassDeclarationSyntax cls => cls.BaseList,
+            StructDeclarationSyntax str => str.BaseList,
+            RecordDeclarationSyntax rec => rec.BaseList,
+            _ => null
+        };
+        if (baseList is null) return false;
+
+        return baseList.Types.Any(bt =>
+        {
+            var simple = ExtractSimpleName(bt.Type.ToString());
+            return simple.Length >= 2
+                && simple[0] == 'I'
+                && char.IsUpper(simple[1])
+                && simple.EndsWith("Store", StringComparison.Ordinal);
+        });
+    }
+
+    // Strips generic arguments and namespace prefixes to return just the simple type name.
+    // Example: "System.Collections.Generic.IList<string>" → "IList"
+    static string ExtractSimpleName(string typeName)
+    {
+        var lt = typeName.IndexOf('<');
+        var simple = lt >= 0 ? typeName[..lt] : typeName;
+        var dot = simple.LastIndexOf('.');
+        return dot >= 0 ? simple[(dot + 1)..] : simple;
     }
 
     // A by-value `bool` parameter is the flag-arg smell; out/ref/in bool is not (e.g. a TryXxx's

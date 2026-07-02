@@ -184,6 +184,101 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
+    // Regression #24: an implicit interface implementation's bool parameter is dictated by the
+    // interface contract, not freely chosen — the implementing class's method must not add a
+    // second diagnostic beyond the one already raised for the interface declaration itself.
+    [Fact]
+    public async Task OP005_ignores_implicit_implementation_of_locally_declared_interface()
+    {
+        // The interface designer chose the bool parameter (the interface method is correctly
+        // flagged as a design-time smell). The implementing class cannot change that signature,
+        // so its method must not produce a second OP005 finding.
+        const string code =
+            "interface IEmailStore { void SetEmailConfirmed(bool confirmed); } " +
+            "class UserStore : IEmailStore { public void SetEmailConfirmed(bool confirmed) { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        // Exactly one OP005: the interface definition. The implementing method is excluded.
+        Assert.Single(diags.Where(d => d.Rule == "OP005").ToList());
+    }
+
+    // Anti-over-broadening guard for #24: a public bool-flag method in a class that lists an
+    // external interface in its base list (not declared in the same file) must still be flagged
+    // because we cannot verify the match without semantic analysis.
+    [Fact]
+    public async Task OP005_still_flags_when_implemented_interface_is_not_declared_in_same_file()
+    {
+        // IDisposable is not declared in this snippet, so the rule cannot confirm the method is
+        // an interface implementation — it must remain a flagged smell.
+        const string code =
+            "class C : System.IDisposable { public void Process(bool useCache) { } public void Dispose() { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
+    // Regression #24 follow-up (Finding 1): ASP.NET Identity store Set*Async methods with a bool
+    // parameter on a class implementing an I*Store interface are dictated by the framework contract
+    // and must not fire OP005. The interface is from an external assembly; the heuristic detects
+    // the pattern via method name (Set*Async) + bool param + I*Store in the base list.
+    // Mutation pin: this test FAILS on code that lacks IsKnownIdentityStoreContractMethod.
+    [Fact]
+    public async Task OP005_ignores_set_async_bool_on_istore_implementing_class()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class UserStore : IUserEmailStore<User>, IUserTwoFactorStore<User> { " +
+            "public Task SetEmailConfirmedAsync(User user, bool confirmed, CancellationToken ct) => Task.CompletedTask; " +
+            "public Task SetTwoFactorEnabledAsync(User user, bool enabled, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.False(diags.Has("OP005"));
+    }
+
+    // Anti-over-broadening guard for Finding 1: a Set*Async bool on a class that does NOT implement
+    // any I*Store interface is still a smell and must fire.
+    [Fact]
+    public async Task OP005_still_flags_set_async_bool_when_no_istore_in_base_list()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class ReportService { " +
+            "public Task SetArchivedAsync(object report, bool archived, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
+    // Boundary / mutation-pin for the Identity-store gate: a Set*Async(bool) whose name is NOT in
+    // the closed allowlist must still fire, even when the class lists an I*Store in its base list.
+    // A class implementing IEventStore (or any other user-defined I*Store) owns its own API surface;
+    // the bool parameter is not dictated by an ASP.NET Identity contract.
+    // This test FAILS on the over-broad heuristic (StartsWith("Set") && EndsWith("Async"))
+    // and PASSES after narrowing to the exact-name allowlist.
+    [Fact]
+    public async Task OP005_still_flags_non_identity_set_async_bool_on_unrelated_istore()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class WidgetStore : IEventStore { " +
+            "public Task SetVerboseAsync(bool verbose, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
+    // Regression #24 follow-up (Finding 2): name+count-only matching of in-file interface methods
+    // suppressed unrelated bool-flag overloads whose parameter types differ from those of the matched
+    // interface method. An overload whose parameter types do NOT match the interface must still flag.
+    // Mutation pin: this test FAILS on code that matches by name+count only (no type check).
+    [Fact]
+    public async Task OP005_still_flags_bool_overload_when_interface_has_int_overload_at_same_arity()
+    {
+        // IX declares Foo(int a). C.Foo(int a) is the implicit implementation (correctly suppressed).
+        // C.Foo(bool b) has the same name and arity but a different type — it is an owned method and
+        // must still produce an OP005 finding.
+        const string code =
+            "interface IX { void Foo(int a); } " +
+            "class C : IX { public void Foo(int a) { } public void Foo(bool b) { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
     [Fact]
     public async Task OP006_flags_async_without_cancellation_token()
     {
