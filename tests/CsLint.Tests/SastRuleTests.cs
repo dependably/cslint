@@ -750,6 +750,159 @@ public class SastRuleTests
         Assert.Equal(8, sast008.Count);
     }
 
+    // Regression tests for missed type positions (Ticket #19)
+
+    // --- is-expression extension ---
+
+    [Fact]
+    public async Task SAST008_flags_is_expression_dynamic()
+    {
+        // x is dynamic — BinaryExpressionSyntax (IsExpression), Right slot; previously not flagged.
+        // The only 'dynamic' occurrence is in the Right (type) slot of the is-expression.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object x) { var r = x is dynamic; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_is_expression_left_operand()
+    {
+        // dynamic is string — 'dynamic' is the LEFT operand (a variable reference), not the type.
+        // BinaryExpressionSyntax.Left == node; Right slot carries 'string', not 'dynamic'.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var r = dynamic is string; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // --- C# 12 alias-any-type ---
+
+    [Fact]
+    public async Task SAST008_flags_using_alias_to_dynamic()
+    {
+        // using D = dynamic; — UsingDirectiveSyntax with Alias != null; the NamespaceOrType slot
+        // carries 'dynamic'. This is the ONLY catchable site where an alias launders dynamic past
+        // every other type-position check (the alias name D looks like an ordinary type to all
+        // other rules).
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using D = dynamic;\nclass C { }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_plain_using_namespace()
+    {
+        // using dynamic; — parsed without error (treated as a namespace name), but Alias == null
+        // so the UsingDirectiveSyntax arm does NOT fire. This is not a type alias.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using dynamic;\nclass C { }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // --- LINQ FromClause ---
+
+    [Fact]
+    public async Task SAST008_flags_from_clause_dynamic_type()
+    {
+        // from dynamic d in xs — FromClauseSyntax.Type slot; previously not flagged.
+        // The only 'dynamic' in the snippet is in the type slot of the from-clause.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object[] xs) { var q = from dynamic d in xs select d; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_from_clause_collection()
+    {
+        // from x in dynamic — 'dynamic' is the collection expression (Expression slot), not
+        // the range-variable type. FromClauseSyntax.Type is 'var' (implicit), not 'dynamic'.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object[] dynamic) { var q = from x in dynamic select x; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // --- LINQ JoinClause ---
+
+    [Fact]
+    public async Task SAST008_flags_join_clause_dynamic_type()
+    {
+        // join dynamic b in ys on x equals b — JoinClauseSyntax.Type slot; previously not flagged.
+        // The only 'dynamic' is in the range-variable type slot of the join-clause.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(int[] xs, object[] ys) { var q = from x in xs join dynamic b in ys on x equals b select x; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_join_clause_collection()
+    {
+        // join x in dynamic on ... — 'dynamic' is the collection (InExpression slot), not the type.
+        // JoinClauseSyntax.Type is 'var' (implicit); the 'dynamic' identifier is in the expression slot.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(int[] xs, object[] dynamic) { var q = from x in xs join b in dynamic on x equals b select x; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // --- Function pointer parameter ---
+
+    [Fact]
+    public async Task SAST008_flags_function_pointer_parameter_dynamic()
+    {
+        // delegate*<dynamic, void> — FunctionPointerParameterSyntax.Type slot.
+        // Requires an unsafe context in production, but SAST008 is purely syntactic so the
+        // snippet need not compile in-project. The only 'dynamic' is in the type slot.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { unsafe void M() { delegate*<dynamic, void> fp = null; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    // --- Mixed partial-failure: all four new positions in one file ---
+
+    [Fact]
+    public async Task SAST008_mixed_issue19_type_positions_flags_only_type_slots()
+    {
+        // One file exercising all four new type positions (alias, is-expr, from-clause,
+        // join-clause, fnptr) plus adjacent non-type slots that must NOT fire.
+        //
+        // Expected SAST008 count derivation (all occurrences of 'dynamic' as identifier):
+        //   Line 01 — using D = dynamic;                    → UsingDirectiveSyntax.NamespaceOrType  (flag)
+        //   Line 05 — from dynamic d in xs                  → FromClauseSyntax.Type                 (flag)
+        //   Line 06 — join dynamic b in ys                  → JoinClauseSyntax.Type                 (flag)
+        //   Line 09 — x is dynamic                          → BinaryExpressionSyntax.Right (IsExpr) (flag)
+        //   Line 12 — delegate*<dynamic, void>              → FunctionPointerParameterSyntax.Type   (flag)
+        //   Line 15 — dynamic is string  (LEFT operand)     → NOT flagged (Left slot, not Right)
+        //   Line 16 — from x in dynamic  (collection expr)  → NOT flagged (Expression slot, not Type)
+        //   Line 17 — join b in dynamic  (collection expr)  → NOT flagged (InExpression slot, not Type)
+        // Total expected: 5
+        const string code = """
+            using D = dynamic;
+            class C
+            {
+                void Query(object[] xs, object[] ys)
+                {
+                    var q1 = from dynamic d in xs select d;
+                    var q2 = from x in xs join dynamic b in ys on x equals b select x;
+                }
+
+                void IsCheck(object x) { var r = x is dynamic; }
+
+                unsafe void FnPtr() { delegate*<dynamic, void> fp = null; }
+
+                // Non-type positions — must NOT flag
+                void Clean(object dynamic, object[] xs, object[] ys)
+                {
+                    var r = dynamic is string;
+                    var q3 = from x in xs select x;
+                    var q4 = from x in xs join b in ys on x equals b select x;
+                }
+            }
+            """;
+        var diags = await T.Run(new DynamicUsageRule(), code);
+        var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
+        // Exactly 5: alias + from-type + join-type + is-right + fnptr-type.
+        // Deleting any single new arm or over-broadening to include the Left/collection slots changes the count.
+        Assert.Equal(5, sast008.Count);
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {
