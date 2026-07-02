@@ -184,6 +184,37 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
+    // Regression #24: an implicit interface implementation's bool parameter is dictated by the
+    // interface contract, not freely chosen — the implementing class's method must not add a
+    // second diagnostic beyond the one already raised for the interface declaration itself.
+    [Fact]
+    public async Task OP005_ignores_implicit_implementation_of_locally_declared_interface()
+    {
+        // The interface designer chose the bool parameter (the interface method is correctly
+        // flagged as a design-time smell). The implementing class cannot change that signature,
+        // so its method must not produce a second OP005 finding.
+        const string code =
+            "interface IEmailStore { void SetEmailConfirmed(bool confirmed); } " +
+            "class UserStore : IEmailStore { public void SetEmailConfirmed(bool confirmed) { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        // Exactly one OP005: the interface definition. The implementing method is excluded.
+        Assert.Single(diags.Where(d => d.Rule == "OP005").ToList());
+    }
+
+    // Anti-over-broadening guard for #24: a public bool-flag method in a class that lists an
+    // external interface in its base list (not declared in the same file) must still be flagged
+    // because we cannot verify the match without semantic analysis.
+    [Fact]
+    public async Task OP005_still_flags_when_implemented_interface_is_not_declared_in_same_file()
+    {
+        // IDisposable is not declared in this snippet, so the rule cannot confirm the method is
+        // an interface implementation — it must remain a flagged smell.
+        const string code =
+            "class C : System.IDisposable { public void Process(bool useCache) { } public void Dispose() { } }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
     [Fact]
     public async Task OP006_flags_async_without_cancellation_token()
     {

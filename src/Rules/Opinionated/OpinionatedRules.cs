@@ -121,7 +121,7 @@ sealed class BooleanParameterRule : IRule
 
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
-            if (!DeclaresOwnSignature(method)) continue;
+            if (!DeclaresOwnSignature(method, root)) continue;
 
             foreach (var param in method.ParameterList.Parameters)
             {
@@ -144,7 +144,12 @@ sealed class BooleanParameterRule : IRule
     // A method with no accessibility modifier in a class or struct is implicitly private and is also
     // excluded; however, a method with no modifier in an interface is implicitly public API surface
     // and is still flagged.
-    static bool DeclaresOwnSignature(MethodDeclarationSyntax method)
+    // Implicit interface implementations (public methods that satisfy an interface contract without
+    // an explicit specifier) are also excluded when the interface is declared in the same compilation
+    // unit and has a matching method (same name, same parameter count). Implementations of interfaces
+    // from external assemblies cannot be detected without semantic analysis; use
+    // dotnet_diagnostic.OP005.severity = none in .editorconfig to suppress those per file.
+    static bool DeclaresOwnSignature(MethodDeclarationSyntax method, SyntaxNode root)
     {
         if (method.Modifiers.Any(SyntaxKind.PrivateKeyword)) return false;
         if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)) return false;
@@ -158,7 +163,68 @@ sealed class BooleanParameterRule : IRule
         if (!hasAccessibilityModifier && method.Parent is not InterfaceDeclarationSyntax)
             return false;
 
+        // An implicit interface implementation's signature is dictated by the interface contract.
+        if (IsImplicitImplementationOfLocalInterface(method, root)) return false;
+
         return true;
+    }
+
+    // Returns true when the containing type lists an interface (by the I[A-Z] naming convention)
+    // in its base list AND that interface is declared in the same compilation unit with a method
+    // matching this one's name and parameter count. Only checks the same file; implementations of
+    // interfaces from external assemblies require semantic analysis to detect.
+    static bool IsImplicitImplementationOfLocalInterface(MethodDeclarationSyntax method, SyntaxNode root)
+    {
+        // Implicit implementations only exist in class/struct/record bodies.
+        if (method.Parent is InterfaceDeclarationSyntax) return false;
+
+        var baseList = method.Parent switch
+        {
+            ClassDeclarationSyntax cls => cls.BaseList,
+            StructDeclarationSyntax str => str.BaseList,
+            RecordDeclarationSyntax rec => rec.BaseList,
+            _ => null
+        };
+
+        if (baseList is null) return false;
+
+        // Collect simple names of base types that look like interfaces (I + uppercase initial).
+        var interfaceNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var baseType in baseList.Types)
+        {
+            var simple = ExtractSimpleName(baseType.Type.ToString());
+            if (simple.Length >= 2 && simple[0] == 'I' && char.IsUpper(simple[1]))
+                interfaceNames.Add(simple);
+        }
+
+        if (interfaceNames.Count == 0) return false;
+
+        var methodName = method.Identifier.Text;
+        var paramCount = method.ParameterList.Parameters.Count;
+
+        // Look for a matching method in a locally-visible interface declaration.
+        foreach (var iface in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>())
+        {
+            if (!interfaceNames.Contains(iface.Identifier.Text)) continue;
+            foreach (var ifaceMethod in iface.Members.OfType<MethodDeclarationSyntax>())
+            {
+                if (ifaceMethod.Identifier.Text == methodName
+                    && ifaceMethod.ParameterList.Parameters.Count == paramCount)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Strips generic arguments and namespace prefixes to return just the simple type name.
+    // Example: "System.Collections.Generic.IList<string>" → "IList"
+    static string ExtractSimpleName(string typeName)
+    {
+        var lt = typeName.IndexOf('<');
+        var simple = lt >= 0 ? typeName[..lt] : typeName;
+        var dot = simple.LastIndexOf('.');
+        return dot >= 0 ? simple[(dot + 1)..] : simple;
     }
 
     // A by-value `bool` parameter is the flag-arg smell; out/ref/in bool is not (e.g. a TryXxx's
