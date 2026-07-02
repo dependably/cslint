@@ -95,10 +95,13 @@ sealed class MagicNumberRule : IRule
     }
 
     // A literal passed as a named argument is already self-documenting through the parameter name
-    // — e.g. `BCrypt.HashPassword(password, workFactor: 12)`. Positional arguments (where the
-    // intent is implicit) are still flagged.
+    // — e.g. `BCrypt.HashPassword(password, workFactor: 12)`. Only the NEAREST enclosing
+    // ArgumentSyntax is consulted (matching the boundary-stopping precedent of IsInMemberInitializer)
+    // so that positional literals in nested calls — `Outer(policy: Inner(3, 500))` — are still
+    // flagged; only the literal that IS the named-arg value (i.e. its direct parent argument has a
+    // NameColon) is suppressed.
     static bool IsInNamedArgument(SyntaxNode node) =>
-        node.Ancestors().OfType<ArgumentSyntax>().Any(a => a.NameColon != null);
+        node.Ancestors().OfType<ArgumentSyntax>().FirstOrDefault()?.NameColon != null;
 }
 
 sealed class BooleanParameterRule : IRule

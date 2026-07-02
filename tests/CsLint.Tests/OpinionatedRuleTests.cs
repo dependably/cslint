@@ -98,6 +98,29 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
+    // Regression #25 follow-up: a positional literal inside a call that is itself passed as a
+    // named argument must still be flagged — only the literal that IS the named-arg value is exempt.
+    // `Outer(policy: Inner(3, 500))` — the `500` is positional to Inner, not the named arg itself.
+    [Fact]
+    public async Task OP004_still_flags_positional_literal_nested_inside_named_argument_call()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { Outer(policy: Inner(3, 500)); } " +
+            "void Outer(int policy) { } int Inner(int a, int b) => a + b; }");
+        Assert.True(diags.Has("OP004"));
+    }
+
+    // Regression #25 follow-up: a positional literal in a lambda body passed as a named argument
+    // must still be flagged — the lambda body is not itself the named-arg value.
+    [Fact]
+    public async Task OP004_still_flags_positional_literal_in_lambda_passed_as_named_argument()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { Configure(callback: () => DoWork(42)); } " +
+            "void Configure(System.Action callback) { } void DoWork(int x) { } }");
+        Assert.True(diags.Has("OP004"));
+    }
+
     [Fact]
     public async Task OP005_flags_public_bool_parameter()
     {
