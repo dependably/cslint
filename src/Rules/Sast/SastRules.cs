@@ -629,12 +629,16 @@ sealed class DynamicUsageRule : IRule
     //   TupleElementSyntax                      — .Type:            (dynamic x, int y)  (type in tuple type, not tuple value)
     //   DeclarationExpressionSyntax             — .Type:            out dynamic d       (not a value position)
     //   ForEachStatementSyntax                  — .Type:            foreach (dynamic d in …) (not the collection)
-    //   BinaryExpressionSyntax                  — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //   BinaryExpressionSyntax                  — .Right + AsExpr/IsExpr: obj as dynamic / x is dynamic (not the left operand)
     //   IndexerDeclarationSyntax                — .Type:            dynamic this[int i]  (not a parameter name)
     //   OperatorDeclarationSyntax               — .ReturnType:      static dynamic operator +(...) (not a param)
     //   DefaultExpressionSyntax                 — .Type:            default(dynamic)     (only child is type)
     //   ParenthesizedLambdaExpressionSyntax     — .ReturnType:      dynamic (int x) => x (not the body expression)
     //   RefTypeSyntax                           — .Type:            ref dynamic          (the wrapped type, not a ref)
+    //   UsingDirectiveSyntax                    — .NamespaceOrType + Alias!=null: using D = dynamic (C# 12 alias-any-type; Alias guard prevents 'using dynamic;' false-positive)
+    //   FromClauseSyntax                        — .Type:            from dynamic d in xs (not the collection expression)
+    //   JoinClauseSyntax                        — .Type:            join dynamic b in ys on … equals … (not the collection)
+    //   FunctionPointerParameterSyntax          — .Type:            delegate*<dynamic, void> (unsafe function pointer parameter)
     //
     // ReturnStatementSyntax is intentionally absent: `return dynamic;` has dynamic as an expression,
     // not a type annotation, so including it would produce false positives on variables named dynamic.
@@ -654,12 +658,22 @@ sealed class DynamicUsageRule : IRule
             TupleElementSyntax te => te.Type == node,
             DeclarationExpressionSyntax de => de.Type == node,
             ForEachStatementSyntax fe => fe.Type == node,
-            BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
+            BinaryExpressionSyntax bin =>
+                (bin.IsKind(SyntaxKind.AsExpression) || bin.IsKind(SyntaxKind.IsExpression)) && bin.Right == node,
             IndexerDeclarationSyntax ix => ix.Type == node,
             OperatorDeclarationSyntax op => op.ReturnType == node,
             DefaultExpressionSyntax def => def.Type == node,
             ParenthesizedLambdaExpressionSyntax lam => lam.ReturnType == node,
             RefTypeSyntax rt => rt.Type == node,
+            // C# 12 alias-any-type: `using D = dynamic;` — the Alias guard prevents treating
+            // a bare `using dynamic;` (illegal but parseable) as a type position.
+            UsingDirectiveSyntax ud => ud.Alias != null && ud.NamespaceOrType == node,
+            // LINQ query range-variable type annotations (not the collection expression after 'in')
+            // LINQ query range-variable type annotations (not the collection expression after 'in')
+            FromClauseSyntax fc => fc.Type == node,
+            JoinClauseSyntax jc => jc.Type == node,
+            // Unsafe function pointer parameter: delegate*<dynamic, void>
+            FunctionPointerParameterSyntax fp => fp.Type == node,
             _ => false
         };
 }
