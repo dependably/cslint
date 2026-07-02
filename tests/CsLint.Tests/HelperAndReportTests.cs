@@ -196,3 +196,55 @@ public class PathFilterTests
     public void Blank_glob_is_skipped() =>
         Assert.False(PathFilter.IsExcluded(P("a/b.cs"), Root, ["   "]));
 }
+
+/// <summary>
+/// Regression tests for issue #9: bare relative globs (*.cs, **/*.cs) must enumerate the
+/// current directory, not the filesystem root.
+/// </summary>
+public class PathFilterExpandGlobTests : IDisposable
+{
+    // A scratch directory we control; a single .cs file lives inside it.
+    readonly string _dir;
+    readonly string _savedDir;
+    const string FileName = "Sample.cs";
+
+    public PathFilterExpandGlobTests()
+    {
+        _dir = T.TempDir();
+        File.WriteAllText(Path.Combine(_dir, FileName), "// test");
+        // Switch cwd so bare globs resolve against our temp dir.
+        _savedDir = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(_dir);
+    }
+
+    public void Dispose()
+    {
+        Directory.SetCurrentDirectory(_savedDir);
+        try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
+    }
+
+    // Normalise to absolute path using the current cwd at call time (which is _dir after setup).
+    static string Canonical(string path) => Path.GetFullPath(path);
+
+    [Fact]
+    public void BareStarGlob_enumerates_current_directory()
+    {
+        // On the old code this returned [] (started at "/" and either threw or found nothing
+        // relative to cwd). With the fix it must return Sample.cs.
+        // Use the expected absolute path constructed from the resolved cwd to avoid symlink mismatches.
+        var expected = Path.Combine(Directory.GetCurrentDirectory(), FileName);
+        var results = PathFilter.ExpandTarget("*.cs")
+            .Select(Canonical).ToList();
+        Assert.Contains(expected, results);
+    }
+
+    [Fact]
+    public void DoubleStarGlob_enumerates_current_directory()
+    {
+        // **/*.cs should also anchor at cwd, not at "/".
+        var expected = Path.Combine(Directory.GetCurrentDirectory(), FileName);
+        var results = PathFilter.ExpandTarget("**/*.cs")
+            .Select(Canonical).ToList();
+        Assert.Contains(expected, results);
+    }
+}
