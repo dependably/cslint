@@ -45,9 +45,16 @@ sealed class VarStyleRule : IRule
         string filePath, TypeSyntax type, ExpressionSyntax init,
         int line, int col, FileConfig config, List<Diagnostic> diagnostics)
     {
-        var typeName = type.ToString();
+        // Skip null-literal initializers early: `var x = null` does not compile (CS0815), so
+        // suggesting var here would produce invalid code — applies to ALL branches below.
+        if (init.IsKind(SyntaxKind.NullLiteralExpression)) return;
 
-        if (type is PredefinedTypeSyntax)
+        var typeName = type.ToString();
+        // Unwrap nullable (e.g. string?, int?) so that nullable built-in types are
+        // routed through csharp_style_var_for_built_in_types, not var_elsewhere.
+        var coreType = type is NullableTypeSyntax nts ? nts.ElementType : type;
+
+        if (coreType is PredefinedTypeSyntax)
         {
             if (StyleHelper.TryGet(config, "csharp_style_var_for_built_in_types",
                 out var val, out var sev) && val == "true")
