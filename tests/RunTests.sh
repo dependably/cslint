@@ -87,6 +87,7 @@ check "OP006 cancel token"    "OP006" --scan "$FIXTURE_DIR/opinionated/OP006_Mis
 echo
 echo "=== Tool features (v4.1: exclude / editorconfig suppression / OP005 refinement) ==="
 check_absent "OP005 ignores out bool"            "OP005"   --scan "$FIXTURE_DIR/opinionated/OP005_OutRefBool.cs"
+check_absent "OP005 ignores implicitly private"  "OP005"   --scan "$FIXTURE_DIR/opinionated/OP005_ImplicitlyPrivate.cs"
 check_absent "SAST002 silenced via editorconfig" "SAST002" --sast "$FIXTURE_DIR/suppress/ConsoleApp.cs"
 check_absent "exclude glob skips matched file"   "OP004"   --scan "$FIXTURE_DIR/opinionated/OP004_MagicNumbers.cs" --exclude "OP004_MagicNumbers.cs"
 
