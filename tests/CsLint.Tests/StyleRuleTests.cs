@@ -42,6 +42,72 @@ public class StyleRuleTests
     public void CS010_does_not_apply_without_keys() =>
         Assert.False(new VarStyleRule().AppliesTo(T.Cfg(("indent_style", "tab"))));
 
+    // Regression #20 — BUG 1: nullable built-in types must be routed through
+    // csharp_style_var_for_built_in_types, not var_elsewhere.
+
+    [Fact]
+    public async Task CS010_nullable_string_not_flagged_when_built_in_false()
+    {
+        // string? is a nullable built-in; with var_for_built_in_types=false it should be
+        // handled by that key (no flag) rather than spilling into var_elsewhere.
+        // Use a method-call initializer so TypeApparentFromInitializer returns false
+        // and the old code's fall-through-to-elsewhere bug is directly exercised.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { string? F() => null; void M() { string? x = F(); } }",
+            T.Cfg(
+                ("csharp_style_var_for_built_in_types", "false"),
+                ("csharp_style_var_elsewhere", "true")));
+        Assert.False(diags.Has("CS010"));
+    }
+
+    [Fact]
+    public async Task CS010_nullable_int_not_flagged_when_built_in_false()
+    {
+        // int? is a nullable built-in; same rule as above.
+        // Use a method-call initializer (TypeApparentFromInitializer=false) to expose the bug.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { int? F() => null; void M() { int? x = F(); } }",
+            T.Cfg(
+                ("csharp_style_var_for_built_in_types", "false"),
+                ("csharp_style_var_elsewhere", "true")));
+        Assert.False(diags.Has("CS010"));
+    }
+
+    [Fact]
+    public async Task CS010_nullable_builtin_flagged_when_built_in_true()
+    {
+        // Positive control: string? should still flag when var_for_built_in_types=true.
+        // Method-call initializer ensures the fix routes through the built-in branch, not elsewhere.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { string? F() => null; void M() { string? x = F(); } }",
+            T.Cfg(("csharp_style_var_for_built_in_types", "true")));
+        Assert.True(diags.Has("CS010"));
+    }
+
+    // Regression #20 — BUG 2: null-literal initializers must not reach var_elsewhere
+    // because `var x = null` does not compile.
+
+    [Fact]
+    public async Task CS010_null_literal_init_not_flagged_by_elsewhere()
+    {
+        // T? x = null; must never produce CS010 — var x = null; is invalid C#.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { void M() { C? x = null; } }",
+            T.Cfg(("csharp_style_var_elsewhere", "true")));
+        Assert.False(diags.Has("CS010"));
+    }
+
+    [Fact]
+    public async Task CS010_elsewhere_positive_control_still_fires()
+    {
+        // A genuine elsewhere case (non-built-in, type not apparent, non-null init)
+        // must still be flagged so the guard is not over-broad.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { static C F() => new C(); void M() { C x = F(); } }",
+            T.Cfg(("csharp_style_var_elsewhere", "true")));
+        Assert.True(diags.Has("CS010"));
+    }
+
     // CS011 — expression bodies
     [Fact]
     public async Task CS011_prefers_expression_body()
