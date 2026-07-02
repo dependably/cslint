@@ -143,12 +143,27 @@ sealed class SqlInjectionRule : IRule
         "CreateCommand",
     };
 
+    // Well-known ADO.NET / ORM command types whose constructor arguments are SQL strings.
+    static readonly HashSet<string> SqlCommandTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SqlCommand", "SqliteCommand", "NpgsqlCommand",
+        "MySqlCommand", "OracleCommand", "OdbcCommand", "OleDbCommand",
+    };
+
+    // Falls back to a suffix heuristic so that less-common drivers (e.g. SnowflakeCommand,
+    // BigQueryCommand) are still caught without requiring an exhaustive allow-list.
+    static bool IsSqlCommandType(string typeName) =>
+        SqlCommandTypes.Contains(typeName) ||
+        typeName.EndsWith("Command", StringComparison.OrdinalIgnoreCase) ||
+        typeName.EndsWith("DataAdapter", StringComparison.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
         var filePath = unit.Path;
         var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
+        // 1. Method invocations: db.ExecuteSqlRaw($"...{id}"), cmd.ExecuteReader(), etc.
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             var methodName = GetMethodName(invocation);
@@ -168,7 +183,75 @@ sealed class SqlInjectionRule : IRule
             }
         }
 
+        // 2. Constructor calls: new SqlCommand($"...{id}") and new($"...{id}") (implicit form).
+        //    Both derive from BaseObjectCreationExpressionSyntax; ArgumentList is nullable there.
+        foreach (var creation in root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>())
+        {
+            var typeName = ResolveCreatedTypeName(creation);
+            if (typeName == null || !IsSqlCommandType(typeName)) continue;
+
+            var args = creation.ArgumentList?.Arguments;
+            if (args == null || args.Value.Count == 0) continue;
+
+            if (args.Value[0].Expression is InterpolatedStringExpressionSyntax interpolated &&
+                interpolated.Contents.OfType<InterpolationSyntax>().Any())
+            {
+                var loc = creation.GetLocation().GetLineSpan();
+                diagnostics.Add(new(filePath,
+                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                    $"Possible SQL injection: interpolated string passed to {typeName} constructor. Use parameterised queries.",
+                    Severity.Error));
+            }
+        }
+
+        // 3. CommandText assignment: cmd.CommandText = $"...{id}"
+        foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            if (assignment.Left is not MemberAccessExpressionSyntax mem) continue;
+            if (!mem.Name.Identifier.Text.Equals("CommandText", StringComparison.Ordinal)) continue;
+
+            if (assignment.Right is InterpolatedStringExpressionSyntax interpolated &&
+                interpolated.Contents.OfType<InterpolationSyntax>().Any())
+            {
+                var loc = assignment.GetLocation().GetLineSpan();
+                diagnostics.Add(new(filePath,
+                    loc.StartLinePosition.Line + 1, loc.StartLinePosition.Character + 1, Id,
+                    "Possible SQL injection: interpolated string assigned to CommandText. Use parameterised queries.",
+                    Severity.Error));
+            }
+        }
+
         return diagnostics;
+    }
+
+    // Returns the simple type name for explicit new T(...) or resolves it from the declared
+    // variable type for implicit new(...).
+    static string? ResolveCreatedTypeName(BaseObjectCreationExpressionSyntax creation)
+    {
+        if (creation is ObjectCreationExpressionSyntax explicit_)
+        {
+            // new SqlCommand(...) → type is the IdentifierNameSyntax / QualifiedNameSyntax
+            return explicit_.Type switch
+            {
+                IdentifierNameSyntax id => id.Identifier.Text,
+                QualifiedNameSyntax q => q.Right.Identifier.Text,
+                _ => null
+            };
+        }
+
+        // ImplicitObjectCreationExpressionSyntax: new(...) — resolve from the declared variable.
+        // The parent chain is: EqualsValueClauseSyntax → VariableDeclaratorSyntax → VariableDeclarationSyntax.
+        if (creation.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax { Parent: VariableDeclarationSyntax decl } })
+        {
+            return decl.Type switch
+            {
+                IdentifierNameSyntax id => id.Identifier.Text,
+                QualifiedNameSyntax q => q.Right.Identifier.Text,
+                _ => null
+            };
+        }
+
+        return null;
     }
 
     static string? GetMethodName(InvocationExpressionSyntax invocation) =>
