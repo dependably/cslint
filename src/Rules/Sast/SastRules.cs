@@ -554,9 +554,30 @@ sealed class ThreadSleepInAsyncRule : IRule
         return diagnostics;
     }
 
-    static bool IsInsideAsyncMethod(SyntaxNode node) =>
-        node.Ancestors().OfType<MethodDeclarationSyntax>()
-            .Any(m => m.Modifiers.Any(SyntaxKind.AsyncKeyword));
+    // Determines whether the Thread.Sleep runs on an async execution context. The relevant
+    // context is the NEAREST enclosing function-like node, not just any ancestor method: a
+    // lambda / anonymous method / local function establishes its own execution context. A
+    // synchronous lambda or local function nested inside an async method runs synchronously
+    // (e.g. Task.Run(() => Thread.Sleep(...))), so blocking there is acceptable — while an
+    // async lambda or async local function inside a sync method IS an async context.
+    static bool IsInsideAsyncMethod(SyntaxNode node)
+    {
+        foreach (var ancestor in node.Ancestors())
+        {
+            switch (ancestor)
+            {
+                case AnonymousFunctionExpressionSyntax lambda:
+                    // covers parenthesized/simple lambdas and `delegate {}` anonymous methods
+                    return lambda.Modifiers.Any(SyntaxKind.AsyncKeyword)
+                        || lambda.AsyncKeyword.IsKind(SyntaxKind.AsyncKeyword);
+                case LocalFunctionStatementSyntax local:
+                    return local.Modifiers.Any(SyntaxKind.AsyncKeyword);
+                case MethodDeclarationSyntax method:
+                    return method.Modifiers.Any(SyntaxKind.AsyncKeyword);
+            }
+        }
+        return false;
+    }
 }
 
 sealed class DynamicUsageRule : IRule

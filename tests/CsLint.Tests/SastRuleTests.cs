@@ -346,6 +346,51 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST007"));
     }
 
+    // Regression (#4): a SYNCHRONOUS lambda inside an async method runs synchronously on its
+    // own execution context (e.g. Task.Run(() => Thread.Sleep(...))), so blocking is acceptable.
+    // The old ancestor walk (OfType<MethodDeclarationSyntax>) passed straight through the lambda
+    // and flagged this as a false positive.
+    [Fact]
+    public async Task SAST007_clean_sync_lambda_in_async_method()
+    {
+        var diags = await T.Run(new ThreadSleepInAsyncRule(),
+            "using System.Threading; using System.Threading.Tasks; "
+            + "class C { async Task M() { await Task.Run(() => Thread.Sleep(10)); } }");
+        Assert.False(diags.Has("SAST007"));
+    }
+
+    // Regression (#4): an ASYNC lambda IS an async context, even inside a non-async method.
+    // The old walk never matched lambdas at all, making this a false negative.
+    [Fact]
+    public async Task SAST007_flags_async_lambda_in_sync_method()
+    {
+        var diags = await T.Run(new ThreadSleepInAsyncRule(),
+            "using System; using System.Threading; using System.Threading.Tasks; "
+            + "class C { void M() { Func<Task> f = async () => { Thread.Sleep(10); }; } }");
+        Assert.True(diags.Has("SAST007"));
+    }
+
+    // Regression (#4): a synchronous LOCAL FUNCTION inside an async method runs synchronously;
+    // the old walk climbed past it to the async method and produced a false positive.
+    [Fact]
+    public async Task SAST007_clean_sync_local_function_in_async_method()
+    {
+        var diags = await T.Run(new ThreadSleepInAsyncRule(),
+            "using System.Threading; using System.Threading.Tasks; "
+            + "class C { async Task M() { void Local() { Thread.Sleep(10); } Local(); await Task.Yield(); } }");
+        Assert.False(diags.Has("SAST007"));
+    }
+
+    // Regression (#4): an async local function is an async context.
+    [Fact]
+    public async Task SAST007_flags_async_local_function()
+    {
+        var diags = await T.Run(new ThreadSleepInAsyncRule(),
+            "using System.Threading; using System.Threading.Tasks; "
+            + "class C { void M() { async Task Local() { Thread.Sleep(10); await Task.Yield(); } _ = Local(); } }");
+        Assert.True(diags.Has("SAST007"));
+    }
+
     [Fact]
     public async Task SAST008_flags_dynamic_local()
     {
