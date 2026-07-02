@@ -489,6 +489,130 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST008"));
     }
 
+    // Regression tests for missed type positions (Ticket #17)
+
+    [Fact]
+    public async Task SAST008_flags_nullable_dynamic()
+    {
+        // dynamic? — NullableTypeSyntax parent, ElementType slot; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { dynamic? Field; }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_local_function_dynamic_return()
+    {
+        // dynamic Local() — LocalFunctionStatementSyntax parent, ReturnType slot; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { dynamic Local() => 1; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_local_function_name()
+    {
+        // void dynamic() — 'dynamic' is the method name (SyntaxToken), not the return type node.
+        // LocalFunctionStatementSyntax.ReturnType != node when the identifier fills the name slot.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { void dynamic() { } } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_tuple_element_dynamic_type()
+    {
+        // (dynamic x, int y) as a type — TupleElementSyntax parent, Type slot; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { (dynamic x, int y) M() => (1, 2); }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_tuple_value()
+    {
+        // (dynamic, 1) as a value expression — IdentifierNameSyntax inside a TupleExpressionSyntax
+        // argument, not a TupleElementSyntax type slot.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var t = (dynamic, 1); } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_declaration_expression_out_dynamic()
+    {
+        // M(out dynamic d) — DeclarationExpressionSyntax parent, Type slot; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { Parse(out dynamic d); } void Parse(out dynamic x) { x = 1; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_out_argument_reference()
+    {
+        // M(out dynamic) — 'dynamic' is an identifier reference passed as an out argument,
+        // not a type in a declaration expression. ArgumentSyntax parent, not DeclarationExpressionSyntax.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { Parse(out dynamic); } void Parse(out object x) { x = null; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_delegate_dynamic_return()
+    {
+        // delegate dynamic D() — DelegateDeclarationSyntax parent, ReturnType slot; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { delegate dynamic Fetcher(); }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_delegate_name()
+    {
+        // delegate void dynamic() — 'dynamic' fills the identifier name slot (SyntaxToken),
+        // not the ReturnType node. DelegateDeclarationSyntax.ReturnType != node here.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { delegate void dynamic(); }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // Mixed partial-failure: a file with a mix of the five new type positions and adjacent
+    // non-type slots — only the type-position occurrences must be flagged.
+    [Fact]
+    public async Task SAST008_mixed_new_type_positions_flags_only_type_slots()
+    {
+        const string code = """
+            class C
+            {
+                // Type positions — must flag (5 occurrences)
+                dynamic? NullableField;
+                delegate dynamic Fetcher();
+                (dynamic x, int y) TupleReturn() => (1, 2);
+
+                void UseDynamic()
+                {
+                    dynamic Local() => 42;
+                    Parse(out dynamic d);
+                }
+
+                void Parse(out dynamic x) { x = 1; }
+
+                // Non-type positions — must NOT flag
+                void Clean(object dynamic)
+                {
+                    var t = (dynamic, 1);
+                    Parse(out dynamic);
+                }
+            }
+            """;
+        var diags = await T.Run(new DynamicUsageRule(), code);
+        var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
+        // NullableField (dynamic?), Fetcher return, TupleReturn return, Local return,
+        // Parse parameter (out dynamic x) declaration + Parse(out dynamic d) declaration =
+        // delegate dynamic + (dynamic x, ...) + dynamic? + dynamic Local + out dynamic d + out dynamic x = 6
+        Assert.True(sast008.Count >= 5, $"Expected at least 5 SAST008 findings, got {sast008.Count}");
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {

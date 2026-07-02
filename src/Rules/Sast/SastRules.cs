@@ -616,15 +616,20 @@ sealed class DynamicUsageRule : IRule
     // identifier merely NAMED "dynamic" in a non-type slot is never falsely flagged.
     //
     // Parent kinds and the type slot checked:
-    //   VariableDeclarationSyntax  — .Type:            dynamic x = …
-    //   ParameterSyntax            — .Type:            void M(dynamic d)   (name is a SyntaxToken)
-    //   PropertyDeclarationSyntax  — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
-    //   MethodDeclarationSyntax    — .ReturnType:      dynamic M()         (name is a SyntaxToken)
-    //   CastExpressionSyntax       — .Type:            (dynamic)obj        (not the operand)
-    //   ArrayTypeSyntax            — .ElementType:     dynamic[]
-    //   TypeArgumentListSyntax     — .Arguments:       List<dynamic>
-    //   ForEachStatementSyntax     — .Type:            foreach (dynamic d in …) (not the collection)
-    //   BinaryExpressionSyntax     — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //   VariableDeclarationSyntax      — .Type:            dynamic x = …
+    //   ParameterSyntax                — .Type:            void M(dynamic d)   (name is a SyntaxToken)
+    //   PropertyDeclarationSyntax      — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
+    //   MethodDeclarationSyntax        — .ReturnType:      dynamic M()         (name is a SyntaxToken)
+    //   LocalFunctionStatementSyntax   — .ReturnType:      dynamic Local()     (name is a SyntaxToken)
+    //   DelegateDeclarationSyntax      — .ReturnType:      delegate dynamic D()
+    //   CastExpressionSyntax           — .Type:            (dynamic)obj        (not the operand)
+    //   ArrayTypeSyntax                — .ElementType:     dynamic[]
+    //   NullableTypeSyntax             — .ElementType:     dynamic?
+    //   TypeArgumentListSyntax         — .Arguments:       List<dynamic>
+    //   TupleElementSyntax             — .Type:            (dynamic x, int y)  (type in tuple type, not tuple value)
+    //   DeclarationExpressionSyntax    — .Type:            out dynamic d       (not a value position)
+    //   ForEachStatementSyntax         — .Type:            foreach (dynamic d in …) (not the collection)
+    //   BinaryExpressionSyntax         — .Right + AsExpr:  obj as dynamic      (not the left operand)
     //
     // ReturnStatementSyntax is intentionally absent: `return dynamic;` has dynamic as an expression,
     // not a type annotation, so including it would produce false positives on variables named dynamic.
@@ -635,9 +640,14 @@ sealed class DynamicUsageRule : IRule
             ParameterSyntax p => p.Type == node,
             PropertyDeclarationSyntax p => p.Type == node,
             MethodDeclarationSyntax m => m.ReturnType == node,
+            LocalFunctionStatementSyntax lf => lf.ReturnType == node,
+            DelegateDeclarationSyntax d => d.ReturnType == node,
             CastExpressionSyntax c => c.Type == node,
             ArrayTypeSyntax a => a.ElementType == node,
+            NullableTypeSyntax n => n.ElementType == node,
             TypeArgumentListSyntax t => t.Arguments.Contains(node),
+            TupleElementSyntax te => te.Type == node,
+            DeclarationExpressionSyntax de => de.Type == node,
             ForEachStatementSyntax fe => fe.Type == node,
             BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
             _ => false
