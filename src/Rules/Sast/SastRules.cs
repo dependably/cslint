@@ -616,20 +616,25 @@ sealed class DynamicUsageRule : IRule
     // identifier merely NAMED "dynamic" in a non-type slot is never falsely flagged.
     //
     // Parent kinds and the type slot checked:
-    //   VariableDeclarationSyntax      — .Type:            dynamic x = …
-    //   ParameterSyntax                — .Type:            void M(dynamic d)   (name is a SyntaxToken)
-    //   PropertyDeclarationSyntax      — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
-    //   MethodDeclarationSyntax        — .ReturnType:      dynamic M()         (name is a SyntaxToken)
-    //   LocalFunctionStatementSyntax   — .ReturnType:      dynamic Local()     (name is a SyntaxToken)
-    //   DelegateDeclarationSyntax      — .ReturnType:      delegate dynamic D()
-    //   CastExpressionSyntax           — .Type:            (dynamic)obj        (not the operand)
-    //   ArrayTypeSyntax                — .ElementType:     dynamic[]
-    //   NullableTypeSyntax             — .ElementType:     dynamic?
-    //   TypeArgumentListSyntax         — .Arguments:       List<dynamic>
-    //   TupleElementSyntax             — .Type:            (dynamic x, int y)  (type in tuple type, not tuple value)
-    //   DeclarationExpressionSyntax    — .Type:            out dynamic d       (not a value position)
-    //   ForEachStatementSyntax         — .Type:            foreach (dynamic d in …) (not the collection)
-    //   BinaryExpressionSyntax         — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //   VariableDeclarationSyntax               — .Type:            dynamic x = …
+    //   ParameterSyntax                         — .Type:            void M(dynamic d)   (name is a SyntaxToken)
+    //   PropertyDeclarationSyntax               — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
+    //   MethodDeclarationSyntax                 — .ReturnType:      dynamic M()         (name is a SyntaxToken)
+    //   LocalFunctionStatementSyntax            — .ReturnType:      dynamic Local()     (name is a SyntaxToken)
+    //   DelegateDeclarationSyntax               — .ReturnType:      delegate dynamic D()
+    //   CastExpressionSyntax                    — .Type:            (dynamic)obj        (not the operand)
+    //   ArrayTypeSyntax                         — .ElementType:     dynamic[]
+    //   NullableTypeSyntax                      — .ElementType:     dynamic?
+    //   TypeArgumentListSyntax                  — .Arguments:       List<dynamic>
+    //   TupleElementSyntax                      — .Type:            (dynamic x, int y)  (type in tuple type, not tuple value)
+    //   DeclarationExpressionSyntax             — .Type:            out dynamic d       (not a value position)
+    //   ForEachStatementSyntax                  — .Type:            foreach (dynamic d in …) (not the collection)
+    //   BinaryExpressionSyntax                  — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //   IndexerDeclarationSyntax                — .Type:            dynamic this[int i]  (not a parameter name)
+    //   OperatorDeclarationSyntax               — .ReturnType:      static dynamic operator +(...) (not a param)
+    //   DefaultExpressionSyntax                 — .Type:            default(dynamic)     (only child is type)
+    //   ParenthesizedLambdaExpressionSyntax     — .ReturnType:      dynamic (int x) => x (not the body expression)
+    //   RefTypeSyntax                           — .Type:            ref dynamic          (the wrapped type, not a ref)
     //
     // ReturnStatementSyntax is intentionally absent: `return dynamic;` has dynamic as an expression,
     // not a type annotation, so including it would produce false positives on variables named dynamic.
@@ -650,6 +655,11 @@ sealed class DynamicUsageRule : IRule
             DeclarationExpressionSyntax de => de.Type == node,
             ForEachStatementSyntax fe => fe.Type == node,
             BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
+            IndexerDeclarationSyntax ix => ix.Type == node,
+            OperatorDeclarationSyntax op => op.ReturnType == node,
+            DefaultExpressionSyntax def => def.Type == node,
+            ParenthesizedLambdaExpressionSyntax lam => lam.ReturnType == node,
+            RefTypeSyntax rt => rt.Type == node,
             _ => false
         };
 }

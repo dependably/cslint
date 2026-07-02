@@ -618,6 +618,138 @@ public class SastRuleTests
         Assert.Equal(6, sast008.Count);
     }
 
+    // Regression tests for missed type positions (Ticket #18)
+
+    [Fact]
+    public async Task SAST008_flags_indexer_dynamic_return()
+    {
+        // dynamic this[int i] — IndexerDeclarationSyntax parent, Type slot; previously not flagged.
+        // The snippet contains no other 'dynamic' occurrence so this test pins exclusively the
+        // IndexerDeclarationSyntax arm.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { dynamic this[int i] => null; }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_indexer_parameter_name()
+    {
+        // dynamic is used as the *name* of an indexer parameter (a SyntaxToken on ParameterSyntax),
+        // not as a type annotation. ParameterSyntax.Type is 'int', not the 'dynamic' identifier,
+        // so the ParameterSyntax arm must not fire. The return type is 'int' and does fire on
+        // the ParameterSyntax arm's Type slot for the int-typed parameter — but 'dynamic' itself
+        // only appears as the parameter name token, which is not an IdentifierNameSyntax node.
+        // Net effect: zero SAST008 diagnostics (the identifier "dynamic" never becomes an
+        // IdentifierNameSyntax in that position).
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { int this[int dynamic] => dynamic; }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_operator_dynamic_return()
+    {
+        // public static dynamic operator +(C a, C b) — OperatorDeclarationSyntax, ReturnType slot;
+        // previously not flagged. The snippet contains no other 'dynamic' so this pins the
+        // OperatorDeclarationSyntax arm.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { public static dynamic operator +(C a, C b) => a; }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_default_expression_dynamic()
+    {
+        // default(dynamic) — DefaultExpressionSyntax parent, Type slot; previously not flagged.
+        // DefaultExpressionSyntax has no expression-value child that could hold an IdentifierNameSyntax,
+        // so there is no adjacent non-type slot to test; comment documents the reasoning.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { var x = default(dynamic); } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_lambda_explicit_return_type()
+    {
+        // dynamic (int x) => x — ParenthesizedLambdaExpressionSyntax, ReturnType slot (C# 10+);
+        // previously not flagged. The expression body 'x' is an int parameter, not 'dynamic',
+        // so this snippet pins the ReturnType arm exclusively.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { var f = dynamic (int x) => x; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_lambda_body_expression()
+    {
+        // dynamic (int x) => dynamic — the body 'dynamic' is in ParenthesizedLambdaExpressionSyntax.
+        // ExpressionBody / Body slot, NOT ReturnType. The slot check ReturnType == node guards this.
+        // Only the return-type 'dynamic' (1 occurrence) should flag; the body 'dynamic' must not.
+        // Total expected: 1 (the return type position only).
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var f = dynamic (int x) => dynamic; } }");
+        var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
+        // Exactly 1: the return-type slot only. The body 'dynamic' is in expression position.
+        Assert.Single(sast008);
+    }
+
+    [Fact]
+    public async Task SAST008_flags_ref_dynamic_return()
+    {
+        // ref dynamic M() — RefTypeSyntax parent, Type slot; previously not flagged because
+        // MethodDeclarationSyntax.ReturnType points to the RefTypeSyntax node, not the 'dynamic'
+        // identifier directly. The snippet has one parameter 'dynamic[] arr' which uses ArrayTypeSyntax
+        // (already covered). Exactly 2 diagnostics: the ref-return 'dynamic' (RefTypeSyntax arm)
+        // + the array element type 'dynamic' (ArrayTypeSyntax arm).
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { ref dynamic M(dynamic[] arr) => ref arr[0]; }");
+        var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
+        Assert.Equal(2, sast008.Count);
+    }
+
+    // Mixed partial-failure: a file covering all five new type positions (Ticket #18) plus the
+    // adjacent non-type slots. Only the type-position occurrences must be flagged.
+    [Fact]
+    public async Task SAST008_mixed_issue18_type_positions_flags_only_type_slots()
+    {
+        const string code = """
+            using System;
+            class C
+            {
+                // Type positions — must flag (6 occurrences)
+                dynamic this[int i] => null;                              // IndexerDeclarationSyntax.Type
+                public static dynamic operator +(C a, C b) => a;         // OperatorDeclarationSyntax.ReturnType
+                ref dynamic RefReturn(dynamic[] arr) => ref arr[0];      // RefTypeSyntax.Type (+ ArrayTypeSyntax.ElementType below)
+
+                void UseDynamic()
+                {
+                    var d1 = default(dynamic);                            // DefaultExpressionSyntax.Type
+                    Func<int, dynamic> f = dynamic (int x) => x;         // ParenthesizedLambdaExpressionSyntax.ReturnType
+                }
+
+                // Non-type position — must NOT flag
+                void Clean(object dynamic)
+                {
+                    var body = dynamic (int x) => dynamic;                // body 'dynamic' is ExpressionBody slot
+                }
+            }
+            """;
+        var diags = await T.Run(new DynamicUsageRule(), code);
+        var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
+        // Exactly 8:
+        //   indexer return (1)            — IndexerDeclarationSyntax.Type
+        //   operator return (1)           — OperatorDeclarationSyntax.ReturnType
+        //   ref dynamic return (1)        — RefTypeSyntax.Type
+        //   dynamic[] element type (1)    — ArrayTypeSyntax.ElementType (RefReturn parameter)
+        //   default(dynamic) (1)          — DefaultExpressionSyntax.Type
+        //   Func<int, dynamic> type arg (1) — TypeArgumentListSyntax (pre-existing arm; covers the field decl)
+        //   lambda return type UseDynamic (1) — ParenthesizedLambdaExpressionSyntax.ReturnType
+        //   lambda return type Clean (1)  — ReturnType slot of Clean's lambda; body 'dynamic' excluded
+        // The body 'dynamic' in Clean (ExpressionBody slot) must NOT flag — that's the key guard.
+        // Exact count (not >=) so removing any arm or adding an over-broad one changes the count.
+        Assert.Equal(8, sast008.Count);
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {
