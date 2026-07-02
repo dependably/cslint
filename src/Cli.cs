@@ -415,11 +415,22 @@ static class Cli
 
     static void SetFormat(CliOptions opts, string value)
     {
-        if (Enum.TryParse<OutputFormat>(value, true, out var fmt))
-            opts.Format = fmt;
+        var fmt = ParseFormat(value);
+        if (fmt is null)
+            opts.OptionError ??= $"invalid --format '{value}' (expected human|json|github)";
         else
-            opts.OptionError ??= $"invalid --format value '{value}' (expected human|json|github)";
+            opts.Format = fmt.Value;
     }
+
+    // Explicit switch rather than Enum.TryParse: TryParse accepts numeric strings
+    // ("--format 1") and we want only the documented tokens.
+    static OutputFormat? ParseFormat(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "human" => OutputFormat.Human,
+        "json" => OutputFormat.Json,
+        "github" => OutputFormat.GitHub,
+        _ => null,
+    };
 
     // The shared suite severity ladder (info=0 .. critical=4). cslint itself only emits two of
     // these — an error is `high`, a warning is `low` — but --fail-on accepts the full ladder.
