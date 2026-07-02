@@ -80,6 +80,26 @@ public class OpinionatedRuleTests
         Assert.False(diags.Has("OP005"));
     }
 
+    // Regression #11: a method with no access modifier in a class is implicitly private and must
+    // not be flagged — only API surface (public/internal/protected) warrants the smell.
+    [Fact]
+    public async Task OP005_ignores_implicitly_private_method_in_class()
+    {
+        var diags = await T.Run(new BooleanParameterRule(On),
+            "class C { void M(bool flag) { } }");
+        Assert.False(diags.Has("OP005"));
+    }
+
+    // Regression #11: an interface method with no modifier is implicitly public API surface and
+    // must still be flagged.
+    [Fact]
+    public async Task OP005_flags_interface_method_without_modifier()
+    {
+        var diags = await T.Run(new BooleanParameterRule(On),
+            "interface I { void M(bool flag); }");
+        Assert.True(diags.Has("OP005"));
+    }
+
     [Fact]
     public async Task OP005_ignores_out_bool()
     {

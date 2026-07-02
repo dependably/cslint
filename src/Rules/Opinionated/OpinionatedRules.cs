@@ -121,10 +121,25 @@ sealed class BooleanParameterRule : IRule
     // A private method, an override, or an explicit interface implementation did not freely choose
     // its own signature — the bool parameter was decided by the base type / interface (e.g. the
     // canonical `protected override void Dispose(bool disposing)`) — so it isn't a flag-arg smell.
-    static bool DeclaresOwnSignature(MethodDeclarationSyntax method) =>
-        !method.Modifiers.Any(SyntaxKind.PrivateKeyword)
-        && !method.Modifiers.Any(SyntaxKind.OverrideKeyword)
-        && method.ExplicitInterfaceSpecifier == null;
+    // A method with no accessibility modifier in a class or struct is implicitly private and is also
+    // excluded; however, a method with no modifier in an interface is implicitly public API surface
+    // and is still flagged.
+    static bool DeclaresOwnSignature(MethodDeclarationSyntax method)
+    {
+        if (method.Modifiers.Any(SyntaxKind.PrivateKeyword)) return false;
+        if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)) return false;
+        if (method.ExplicitInterfaceSpecifier != null) return false;
+
+        // A method with no accessibility modifier outside an interface is implicitly private.
+        bool hasAccessibilityModifier = method.Modifiers.Any(m =>
+            m.IsKind(SyntaxKind.PublicKeyword)
+            || m.IsKind(SyntaxKind.InternalKeyword)
+            || m.IsKind(SyntaxKind.ProtectedKeyword));
+        if (!hasAccessibilityModifier && method.Parent is not InterfaceDeclarationSyntax)
+            return false;
+
+        return true;
+    }
 
     // A by-value `bool` parameter is the flag-arg smell; out/ref/in bool is not (e.g. a TryXxx's
     // `out bool`).
