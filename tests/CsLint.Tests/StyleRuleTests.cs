@@ -435,4 +435,81 @@ public class StyleRuleTests
         var diags = await T.Run(new NamingRule(), "class C { void M(int _) { } }", cfg);
         Assert.False(diags.Has("CS040"));
     }
+
+    // Bug #23 regression tests — per-rule severity: none/silent suppresses; suggestion maps to info.
+
+    static FileConfig MethodNamingCfgWithSeverity(string severity) => T.Cfg(
+        ("dotnet_naming_rule.methods.symbols", "method_group"),
+        ("dotnet_naming_rule.methods.style", "pascal"),
+        ("dotnet_naming_rule.methods.severity", severity),
+        ("dotnet_naming_symbols.method_group.applicable_kinds", "method"),
+        ("dotnet_naming_style.pascal.capitalization", "pascal_case"));
+
+    [Fact]
+    public async Task CS040_none_severity_produces_no_finding()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { void lowercaseName() { } }", MethodNamingCfgWithSeverity("none"));
+        Assert.False(diags.Has("CS040"));
+    }
+
+    [Fact]
+    public async Task CS040_silent_severity_produces_no_finding()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { void lowercaseName() { } }", MethodNamingCfgWithSeverity("silent"));
+        Assert.False(diags.Has("CS040"));
+    }
+
+    [Fact]
+    public async Task CS040_suggestion_severity_yields_info_not_warning()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { void lowercaseName() { } }", MethodNamingCfgWithSeverity("suggestion"));
+        // Finding is still emitted (visible in output) but below the warning gate.
+        Assert.True(diags.Has("CS040"));
+        Assert.DoesNotContain(diags, d => d.Rule == "CS040" && d.Severity == Severity.Warning);
+        Assert.Contains(diags, d => d.Rule == "CS040" && d.Severity == Severity.Info);
+    }
+
+    [Fact]
+    public async Task CS040_error_severity_promotes_to_error()
+    {
+        var diags = await T.Run(new NamingRule(),
+            "class C { void lowercaseName() { } }", MethodNamingCfgWithSeverity("error"));
+        Assert.True(diags.Has("CS040"));
+        Assert.Contains(diags, d => d.Rule == "CS040" && d.Severity == Severity.Error);
+    }
+
+    // Mixed-severity scenario: three naming rules with suggestion/warning/none severities active
+    // simultaneously in one file (the fan-out path is NamingRule iterating all symbols in a
+    // single AnalyzeAsync call). Each rule must honour its own severity independently.
+    [Fact]
+    public async Task CS040_mixed_rule_severities_in_one_file()
+    {
+        var cfg = T.Cfg(
+            ("dotnet_naming_rule.methods_suggestion.symbols", "method_group"),
+            ("dotnet_naming_rule.methods_suggestion.style", "pascal"),
+            ("dotnet_naming_rule.methods_suggestion.severity", "suggestion"),
+            ("dotnet_naming_symbols.method_group.applicable_kinds", "method"),
+            ("dotnet_naming_rule.props_warning.symbols", "prop_group"),
+            ("dotnet_naming_rule.props_warning.style", "pascal"),
+            ("dotnet_naming_rule.props_warning.severity", "warning"),
+            ("dotnet_naming_symbols.prop_group.applicable_kinds", "property"),
+            ("dotnet_naming_rule.params_none.symbols", "param_group"),
+            ("dotnet_naming_rule.params_none.style", "camel"),
+            ("dotnet_naming_rule.params_none.severity", "none"),
+            ("dotnet_naming_symbols.param_group.applicable_kinds", "parameter"),
+            ("dotnet_naming_style.pascal.capitalization", "pascal_case"),
+            ("dotnet_naming_style.camel.capitalization", "camel_case"));
+        // lowercaseMethod violates method rule (suggestion → Info).
+        // badProp violates property rule (warning → Warning).
+        // BadParam violates parameter rule (none → suppressed).
+        var code = "class C { public int badProp { get; set; } " +
+                   "void lowercaseMethod(int BadParam) { } }";
+        var diags = await T.Run(new NamingRule(), code, cfg);
+        Assert.Contains(diags, d => d.Rule == "CS040" && d.Severity == Severity.Info);
+        Assert.Contains(diags, d => d.Rule == "CS040" && d.Severity == Severity.Warning);
+        Assert.DoesNotContain(diags, d => d.Rule == "CS040" && d.Message.Contains("BadParam"));
+    }
 }

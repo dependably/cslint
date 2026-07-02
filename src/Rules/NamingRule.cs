@@ -110,10 +110,14 @@ sealed class NamingRule : IRule
             if (!props.TryGetValue($"{prefix}symbols", out var symbolGroup)) continue;
             if (!props.TryGetValue($"{prefix}style", out var styleName)) continue;
 
-            var (severityStr, _) = (props.GetValueOrDefault($"{prefix}severity", "warning"), 0);
-            var severity = severityStr.ToLowerInvariant() switch
+            var severityStr = props.GetValueOrDefault($"{prefix}severity", "warning")
+                .Trim().ToLowerInvariant();
+            // none/silent suppresses this individual naming rule entirely (no finding produced).
+            if (severityStr is "none" or "silent") continue;
+            var severity = severityStr switch
             {
                 "error" => Severity.Error,
+                "suggestion" or "hint" or "info" => Severity.Info,
                 _ => Severity.Warning
             };
 

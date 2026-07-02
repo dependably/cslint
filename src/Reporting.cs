@@ -1,6 +1,6 @@
 namespace CsLint;
 
-enum Severity { Warning, Error }
+enum Severity { Info, Warning, Error }
 enum OutputFormat { Human, Json, GitHub }
 
 record Diagnostic(
@@ -53,19 +53,20 @@ static class Reporter
             .ThenBy(d => d.Column)
             .GroupBy(d => GetCategory(d.Rule));
 
-        int errors = 0, warnings = 0;
+        int errors = 0, warnings = 0, infos = 0;
 
         foreach (var group in groups)
         {
-            var (e, w) = WriteGroup(group, root);
+            var (e, w, i) = WriteGroup(group, root);
             errors += e;
             warnings += w;
+            infos += i;
         }
 
-        WriteSummary(errors, warnings);
+        WriteSummary(errors, warnings, infos);
     }
 
-    static (int Errors, int Warnings) WriteGroup(
+    static (int Errors, int Warnings, int Infos) WriteGroup(
         IGrouping<int, Diagnostic> group, string root)
     {
         Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -73,7 +74,7 @@ static class Reporter
         Console.ResetColor();
 
         string? currentFile = null;
-        int errors = 0, warnings = 0;
+        int errors = 0, warnings = 0, infos = 0;
 
         foreach (var d in group)
         {
@@ -85,18 +86,29 @@ static class Reporter
 
             WriteEntry(d);
             if (d.Severity == Severity.Error) errors++;
-            else warnings++;
+            else if (d.Severity == Severity.Warning) warnings++;
+            else infos++;
         }
 
-        return (errors, warnings);
+        return (errors, warnings, infos);
     }
 
     static void WriteEntry(Diagnostic d)
     {
         // Render the per-finding severity word using the shared suite ladder vocabulary
-        // (error -> high, warning -> low), padded so the message column stays aligned.
-        var levelLabel = d.Severity == Severity.Error ? "high" : "low ";
-        var color = d.Severity == Severity.Error ? ConsoleColor.Red : ConsoleColor.Yellow;
+        // (error -> high, warning -> low, info -> info), padded so the message column stays aligned.
+        var levelLabel = d.Severity switch
+        {
+            Severity.Error => "high",
+            Severity.Warning => "low ",
+            _ => "info"
+        };
+        var color = d.Severity switch
+        {
+            Severity.Error => ConsoleColor.Red,
+            Severity.Warning => ConsoleColor.Yellow,
+            _ => ConsoleColor.Cyan
+        };
 
         Console.Write($"    {d.Line,LineFieldWidth}:{d.Column,-ColumnFieldWidth}  ");
         Console.ForegroundColor = color;
@@ -105,7 +117,7 @@ static class Reporter
         Console.WriteLine($"  {d.Message}  [{d.Rule}]");
     }
 
-    static void WriteSummary(int errors, int warnings)
+    static void WriteSummary(int errors, int warnings, int infos)
     {
         Console.WriteLine();
         Console.ForegroundColor = errors > 0 ? ConsoleColor.Red : ConsoleColor.Green;
@@ -115,6 +127,13 @@ static class Reporter
         Console.ForegroundColor = warnings > 0 ? ConsoleColor.Yellow : ConsoleColor.Green;
         Console.Write($"{warnings} warning{(warnings != 1 ? "s" : "")}");
         Console.ResetColor();
+        if (infos > 0)
+        {
+            Console.Write(", ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write($"{infos} info");
+            Console.ResetColor();
+        }
         Console.WriteLine();
     }
 
@@ -156,6 +175,7 @@ static class Reporter
 
         var high = diagnostics.Count(d => d.Severity == Severity.Error);
         var low = diagnostics.Count(d => d.Severity == Severity.Warning);
+        var info = diagnostics.Count(d => d.Severity == Severity.Info);
 
         var envelope = new
         {
@@ -167,7 +187,7 @@ static class Reporter
             {
                 scanned,
                 findings = findings.Count,
-                bySeverity = new { critical = 0, high, moderate = 0, low, info = 0 },
+                bySeverity = new { critical = 0, high, moderate = 0, low, info },
                 exitCode,
             },
             findings,
@@ -186,7 +206,12 @@ static class Reporter
     {
         foreach (var d in diagnostics)
         {
-            var level = d.Severity == Severity.Error ? "error" : "warning";
+            var level = d.Severity switch
+            {
+                Severity.Error => "error",
+                Severity.Warning => "warning",
+                _ => "notice"
+            };
             var file = GitHubEscapeProperty(RelativePath(root, d.File));
             var message = GitHubEscapeData($"[{d.Rule}] {d.Message}");
             Console.WriteLine(
@@ -215,8 +240,13 @@ static class Reporter
             .Replace("\r", "%0D")
             .Replace("\n", "%0A");
 
-    // The shared suite severity ladder: cslint emits error -> high, warning -> low.
-    static string Ladder(Severity sev) => sev == Severity.Error ? "high" : "low";
+    // The shared suite severity ladder: cslint emits error -> high, warning -> low, info -> info.
+    static string Ladder(Severity sev) => sev switch
+    {
+        Severity.Error => "high",
+        Severity.Info => "info",
+        _ => "low"
+    };
 
     // Category groups in display/sort order: a rule's rank is its index here, used to group both
     // human and JSON output. EC* universal editorconfig rules, CS*/FMT/IDE* general lint, SAST*
