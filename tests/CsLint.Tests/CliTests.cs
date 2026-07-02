@@ -43,6 +43,30 @@ public class CliTests
     }
 
     [Fact]
+    public void ParseOptions_invalid_format_is_a_usage_error()
+    {
+        // A bad format name must record OptionError (→ exit 2), not silently default to Human.
+        Assert.NotNull(Cli.ParseOptions(["--format", "bogus"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["-f", "bogus"]).OptionError);
+        // Numeric strings parse successfully via Enum.TryParse but must also be rejected — e.g.
+        // "--format 2" would silently mean github; "--format 99" produces an undefined enum value.
+        Assert.NotNull(Cli.ParseOptions(["--format", "2"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--format", "99"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--format", "0"]).OptionError);
+    }
+
+    [Fact]
+    public async Task RunAsync_invalid_format_exits_two()
+    {
+        // End-to-end: an invalid --format value must cause exit code 2.
+        var output = await CaptureRun(["--format", "bogus"]);
+        Assert.Equal(2, output.Code);
+        // A numeric token must also be rejected.
+        var outputNumeric = await CaptureRun(["--format", "99"]);
+        Assert.Equal(2, outputNumeric.Code);
+    }
+
+    [Fact]
     public void ParseOptions_removed_rule_toggle_flags_are_unknown_options()
     {
         // The old --no-magic-numbers / --no-bool-flags / --no-cancellation flags were removed (pure
