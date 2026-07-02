@@ -200,6 +200,76 @@ public class SastRuleTests
         Assert.Equal(4, sast003.Count);
     }
 
+    // Regression (Ticket #22, fix A): Dapper's Query* / Execute* extension methods take the SQL
+    // as their first argument. QueryAsync was absent from DangerousMethods, so an interpolated
+    // Dapper query was invisible. Confirmed live miss: VulnerabilityRepository.cs:653.
+    // Pins the DangerousMethods Dapper additions — on the pre-fix set QueryAsync is unknown so
+    // arg[0] is never inspected and nothing is flagged.
+    [Fact]
+    public async Task SAST003_flags_dapper_queryasync_interpolated()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string orderBy) { conn.QueryAsync<Row>($\"SELECT * FROM v ORDER BY {orderBy}\"); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Regression (Ticket #22, fix A over-broadening guard): a fully-parameterised Dapper call
+    // — a plain string literal SQL plus an anonymous parameter object — must NOT flag. Adding
+    // QueryAsync as a sink must only fire on interpolation, never on every QueryAsync call.
+    [Fact]
+    public async Task SAST003_clean_parameterized_queryasync()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string id) { conn.QueryAsync<Row>(\"SELECT * FROM v WHERE id = @id\", new { id }); } }");
+        Assert.False(diags.Has("SAST003"));
+    }
+
+    // Regression (Ticket #22, fix B): interpolated SQL assigned to a same-method local that then
+    // reaches a sink was invisible (the rule only matched interpolated LITERALS in sink position).
+    // Uses ExecuteSqlRaw — an existing sink — so this pins the local-variable flow INDEPENDENTLY
+    // of the Dapper sink additions. On the pre-fix code arg[0] is an IdentifierNameSyntax, not an
+    // interpolated string, so nothing is flagged. Confirmed live miss: AuditRepository.cs:257->267.
+    [Fact]
+    public async Task SAST003_flags_interpolated_sql_via_local()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string orderColumn) { string sql = $\"SELECT * FROM t ORDER BY {orderColumn}\"; db.ExecuteSqlRaw(sql); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Regression (Ticket #22, fix B over-broadening guard): a local assigned a plain string literal
+    // (no interpolation holes) that reaches a sink must NOT flag — the local-flow check keys off
+    // interpolation, not merely "a local reached a sink".
+    [Fact]
+    public async Task SAST003_clean_constant_sql_via_local()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M() { string sql = \"SELECT 1\"; db.ExecuteSqlRaw(sql); } }");
+        Assert.False(diags.Has("SAST003"));
+    }
+
+    // Regression (Ticket #22, fixes A+B together): the exact live shape — an interpolated SQL
+    // string assigned to a local, then passed to a Dapper QueryAsync sink. Mirrors the missed
+    // AuditRepository.cs:257->267 and BackgroundJobRunRepository.cs:114->130 sites.
+    [Fact]
+    public async Task SAST003_flags_dapper_queryasync_via_local()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string orderColumn) { string listSql = $\"SELECT * FROM audit ORDER BY {orderColumn}\"; conn.QueryAsync<Row>(listSql, new { }); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
+    // Regression (Ticket #22, fix C): new CommandDefinition($"...{x}...") — Dapper's command
+    // struct. IsSqlCommandType keyed off the Command/DataAdapter suffix and CommandDefinition
+    // ends in "Definition", so it slipped through. Pins the explicit SqlCommandTypes entry.
+    [Fact]
+    public async Task SAST003_flags_command_definition_interpolated()
+    {
+        var diags = await T.Run(new SqlInjectionRule(),
+            "class C { void M(string id) { var cd = new CommandDefinition($\"SELECT * FROM t WHERE id = {id}\"); } }");
+        Assert.True(diags.Has("SAST003"));
+    }
+
     [Fact]
     public async Task SAST004_flags_hardcoded_secret_variable()
     {
