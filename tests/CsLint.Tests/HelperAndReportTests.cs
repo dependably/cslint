@@ -156,6 +156,20 @@ public class ReporterTests
         Assert.Contains("::warning file=", output);
         Assert.Contains("[SAST001]", output);
     }
+
+    [Fact]
+    public void GitHub_emits_relative_paths()
+    {
+        // Sample() diagnostics are rooted under "/repo"; annotations must use
+        // workspace-relative paths so GitHub Actions can attach them inline to PR files.
+        // Old code emitted absolute paths (d.File with no relativization); new code must
+        // produce e.g. "file=A.cs" not "file=/repo/A.cs".
+        var output = T.CaptureOut(() => Reporter.Write(Sample(), OutputFormat.GitHub, "/repo"));
+        Assert.Contains("file=A.cs", output);
+        Assert.Contains("file=B.cs", output);
+        // Absolute paths must not appear.
+        Assert.DoesNotContain("file=/repo/", output);
+    }
 }
 
 public class PathFilterTests
