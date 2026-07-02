@@ -70,6 +70,8 @@ check "SAST002 console output" "SAST002" --sast "$FIXTURE_DIR/sast/SAST002_Conso
 check "SAST003 SQL injection"  "SAST003" --sast "$FIXTURE_DIR/sast/SAST003_SqlInjection.cs"
 check "SAST004 secrets"        "SAST004" --sast "$FIXTURE_DIR/sast/SAST004_HardcodedSecrets.cs"
 check "SAST005 fire-forget"    "SAST005" --sast "$FIXTURE_DIR/sast/SAST005_FireAndForget.cs"
+# fixture also covers chained forms (.ConfigureAwait); ensure SAST005 still fires
+check "SAST005 chained await"  "SAST005" --sast "$FIXTURE_DIR/sast/SAST005_FireAndForget.cs"
 check "SAST006 pragma"         "SAST006" --sast "$FIXTURE_DIR/sast/SAST006_PragmaSuppress.cs"
 check "SAST007 thread sleep"   "SAST007" --sast "$FIXTURE_DIR/sast/SAST007_ThreadSleep.cs"
 check "SAST008 dynamic"        "SAST008" --sast "$FIXTURE_DIR/sast/SAST008_DynamicUsage.cs"

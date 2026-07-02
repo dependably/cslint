@@ -16,6 +16,16 @@ public class FireAndForgetFixture
         _ = _repo.SaveAsync();
     }
 
+    public void DiscardChainedConfigureAwait()
+    {
+        _ = _repo.SaveAsync().ConfigureAwait(false);
+    }
+
+    public void ChainedConfigureAwaitStatement()
+    {
+        _repo.SaveAsync().ConfigureAwait(false);
+    }
+
     public async Task SaveCorrectly()
     {
         await _repo.SaveAsync();
