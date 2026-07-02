@@ -84,8 +84,8 @@ public class StyleRuleTests
         Assert.True(diags.Has("CS010"));
     }
 
-    // Regression #20 — BUG 2: null-literal initializers must not reach var_elsewhere
-    // because `var x = null` does not compile.
+    // Regression #20 — BUG 2: null-literal initializers must not reach any branch
+    // because `var x = null` does not compile (CS0815).
 
     [Fact]
     public async Task CS010_null_literal_init_not_flagged_by_elsewhere()
@@ -94,6 +94,28 @@ public class StyleRuleTests
         var diags = await T.Run(new VarStyleRule(),
             "class C { void M() { C? x = null; } }",
             T.Cfg(("csharp_style_var_elsewhere", "true")));
+        Assert.False(diags.Has("CS010"));
+    }
+
+    [Fact]
+    public async Task CS010_nullable_builtin_null_init_not_flagged_when_built_in_true()
+    {
+        // string? x = null; must never produce CS010 — var x = null; is invalid C# (CS0815).
+        // The guard must fire BEFORE the PredefinedTypeSyntax branch, not after it.
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { void M() { string? x = null; } }",
+            T.Cfg(("csharp_style_var_for_built_in_types", "true")));
+        Assert.False(diags.Has("CS010"));
+    }
+
+    [Fact]
+    public async Task CS010_nonnullable_builtin_null_init_not_flagged_when_built_in_true()
+    {
+        // string c = null; (non-nullable built-in, null literal) must not produce CS010
+        // because var c = null; is also invalid C# (CS0815).
+        var diags = await T.Run(new VarStyleRule(),
+            "class C { void M() { string c = null; } }",
+            T.Cfg(("csharp_style_var_for_built_in_types", "true")));
         Assert.False(diags.Has("CS010"));
     }
 
