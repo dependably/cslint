@@ -213,6 +213,90 @@ public class ReporterTests
         Assert.Contains("%25", output);
         Assert.Contains("%2C", output);
     }
+
+    // Regression tests for GitHub Actions annotation escaping (fix #16).
+    // These tests fail on the old code (raw interpolation) and pass on the fix.
+
+    [Fact]
+    public void GitHub_escapes_newline_in_message()
+    {
+        // A message containing a raw newline must produce a single output line.
+        var diag = new Diagnostic("/repo/A.cs", 1, 1, "CS010", "line1\nline2", Severity.Warning);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        // Must be exactly one annotation line (the trailing newline from WriteLine is the only
+        // real newline; everything inside the message must be percent-encoded).
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Single(lines);
+        Assert.Contains("%0A", lines[0]);
+        Assert.DoesNotContain("line2\n", lines[0]);
+    }
+
+    [Fact]
+    public void GitHub_escapes_carriage_return_in_message()
+    {
+        var diag = new Diagnostic("/repo/A.cs", 1, 1, "CS010", "part1\rpart2", Severity.Warning);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Single(lines);
+        Assert.Contains("%0D", lines[0]);
+    }
+
+    [Fact]
+    public void GitHub_escapes_percent_in_message()
+    {
+        // A literal '%' in the message must be escaped so the runner does not mis-decode it.
+        var diag = new Diagnostic("/repo/A.cs", 1, 1, "CS010", "100% done", Severity.Warning);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        Assert.Contains("%25", output);
+        Assert.DoesNotContain("100% done", output);
+    }
+
+    [Fact]
+    public void GitHub_escapes_comma_in_file_property()
+    {
+        // A comma in the file path would break the property list parsing.
+        var diag = new Diagnostic("/repo/a,b/C.cs", 1, 1, "EC001", "indent", Severity.Warning);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        // The file= property value must not contain a raw comma.
+        var annotationLine = output.Split('\n')[0];
+        var fileValue = annotationLine.Split("file=")[1].Split(",line=")[0];
+        Assert.DoesNotContain(",", fileValue);
+        Assert.Contains("%2C", fileValue);
+    }
+
+    [Fact]
+    public void GitHub_escapes_colon_in_file_property()
+    {
+        // A colon in the file path (e.g. Windows drive letter C:/) must be escaped.
+        var diag = new Diagnostic("C:/repo/A.cs", 1, 1, "EC001", "indent", Severity.Warning);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        // The file= property value must have the colon encoded.
+        var annotationLine = output.Split('\n')[0];
+        var fileValue = annotationLine.Split("file=")[1].Split(",line=")[0];
+        Assert.Contains("%3A", fileValue);
+    }
+
+    [Fact]
+    public void GitHub_mixed_newline_and_percent_escaping_is_single_line()
+    {
+        // Verify combined escaping: % first so %0A itself does not get double-encoded.
+        var diag = new Diagnostic("/repo/A.cs", 2, 3, "SAST001",
+            "use 100% safe\nand another line", Severity.Error);
+        var output = T.CaptureOut(() => Reporter.Write([diag], OutputFormat.GitHub, "/repo"));
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Single(lines);
+        Assert.StartsWith("::error file=", lines[0]);
+        Assert.Contains("%25", lines[0]);
+        Assert.Contains("%0A", lines[0]);
+        // %0A itself must not have had its % double-encoded to %250A
+        Assert.DoesNotContain("%250A", lines[0]);
+    }
 }
 
 public class PathFilterTests
