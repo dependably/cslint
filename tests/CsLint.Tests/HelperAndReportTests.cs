@@ -185,6 +185,10 @@ public class PathFilterTests
         Assert.True(PathFilter.IsExcluded(P("a/b.cs"), Root, ["?.cs"]));
 
     [Fact]
+    public void Question_mark_does_not_match_path_separator() =>
+        Assert.False(PathFilter.IsExcluded(P("a/b.cs"), Root, ["a?b.cs"]));
+
+    [Fact]
     public void Non_matching_glob_is_not_excluded() =>
         Assert.False(PathFilter.IsExcluded(P("a/b.cs"), Root, ["*.txt"]));
 
