@@ -64,6 +64,63 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP004"));
     }
 
+    // Regression #25: textual allow-list missed float spellings such as 1.0 (numeric-equiv of 1).
+    [Fact]
+    public async Task OP004_allows_float_equivalent_of_allow_listed_integer()
+    {
+        var diags = await T.Run(new MagicNumberRule(On), "class C { bool M(double x) { return x >= 1.0; } }");
+        Assert.False(diags.Has("OP004"));
+    }
+
+    // Positive control: a non-allow-listed float must still be flagged.
+    [Fact]
+    public async Task OP004_still_flags_non_allow_listed_float()
+    {
+        var diags = await T.Run(new MagicNumberRule(On), "class C { bool M(double x) { return x >= 3.7; } }");
+        Assert.True(diags.Has("OP004"));
+    }
+
+    // Regression #25: a literal in a named-argument position is already self-documenting.
+    [Fact]
+    public async Task OP004_ignores_named_argument()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { DoWork(workFactor: 12); } void DoWork(int workFactor) { } }");
+        Assert.False(diags.Has("OP004"));
+    }
+
+    // Positive control: same literal in a positional argument must still be flagged.
+    [Fact]
+    public async Task OP004_still_flags_positional_argument()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { DoWork(12); } void DoWork(int workFactor) { } }");
+        Assert.True(diags.Has("OP004"));
+    }
+
+    // Regression #25 follow-up: a positional literal inside a call that is itself passed as a
+    // named argument must still be flagged — only the literal that IS the named-arg value is exempt.
+    // `Outer(policy: Inner(3, 500))` — the `500` is positional to Inner, not the named arg itself.
+    [Fact]
+    public async Task OP004_still_flags_positional_literal_nested_inside_named_argument_call()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { Outer(policy: Inner(3, 500)); } " +
+            "void Outer(int policy) { } int Inner(int a, int b) => a + b; }");
+        Assert.True(diags.Has("OP004"));
+    }
+
+    // Regression #25 follow-up: a positional literal in a lambda body passed as a named argument
+    // must still be flagged — the lambda body is not itself the named-arg value.
+    [Fact]
+    public async Task OP004_still_flags_positional_literal_in_lambda_passed_as_named_argument()
+    {
+        var diags = await T.Run(new MagicNumberRule(On),
+            "class C { void M() { Configure(callback: () => DoWork(42)); } " +
+            "void Configure(System.Action callback) { } void DoWork(int x) { } }");
+        Assert.True(diags.Has("OP004"));
+    }
+
     [Fact]
     public async Task OP005_flags_public_bool_parameter()
     {
