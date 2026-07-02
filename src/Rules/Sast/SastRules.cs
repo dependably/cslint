@@ -631,15 +631,15 @@ sealed class DynamicUsageRule : IRule
     static bool IsInTypePosition(IdentifierNameSyntax node) =>
         node.Parent switch
         {
-            VariableDeclarationSyntax v  => v.Type == node,
-            ParameterSyntax p            => p.Type == node,
-            PropertyDeclarationSyntax p  => p.Type == node,
-            MethodDeclarationSyntax m    => m.ReturnType == node,
-            CastExpressionSyntax c       => c.Type == node,
-            ArrayTypeSyntax a            => a.ElementType == node,
-            TypeArgumentListSyntax t     => t.Arguments.Contains(node),
-            ForEachStatementSyntax fe    => fe.Type == node,
-            BinaryExpressionSyntax bin   => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
-            _                            => false
+            VariableDeclarationSyntax v => v.Type == node,
+            ParameterSyntax p => p.Type == node,
+            PropertyDeclarationSyntax p => p.Type == node,
+            MethodDeclarationSyntax m => m.ReturnType == node,
+            CastExpressionSyntax c => c.Type == node,
+            ArrayTypeSyntax a => a.ElementType == node,
+            TypeArgumentListSyntax t => t.Arguments.Contains(node),
+            ForEachStatementSyntax fe => fe.Type == node,
+            BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
+            _ => false
         };
 }
