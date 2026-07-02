@@ -156,7 +156,7 @@ public class ReporterTests
         Assert.Equal("opinionated", op.GetProperty("category").GetString());
     }
 
-    // Bug #23 follow-up (Finding 3b): Reporter must emit correct labels and counts for Info severity.
+    // Reporter must emit correct labels and counts for Info severity.
 
     [Fact]
     public void Human_info_finding_shows_info_label_and_summary()
@@ -174,9 +174,8 @@ public class ReporterTests
     [Fact]
     public void Json_info_finding_populates_bySeverity_info()
     {
-        // bySeverity.info must be 1 (not 0) when there is an Info-severity finding.
-        // The ladder word for each finding must be "info".
-        // This test fails on the pre-fix code because Info findings were treated as warnings.
+        // bySeverity.info must be 1 (not 0) when there is an Info-severity finding, and the
+        // ladder word for each finding must be "info" (not folded into warnings).
         var output = T.CaptureOut(() =>
             Reporter.Write(SampleWithInfo(), OutputFormat.Json, "/repo",
                 scanned: 3, exitCode: 0, toolVersion: "9.9.9"));
@@ -222,8 +221,7 @@ public class ReporterTests
     {
         // Sample() diagnostics are rooted under "/repo"; annotations must use
         // workspace-relative paths so GitHub Actions can attach them inline to PR files.
-        // Old code emitted absolute paths (d.File with no relativization); new code must
-        // produce e.g. "file=A.cs" not "file=/repo/A.cs".
+        // Must produce e.g. "file=A.cs", never the absolute "file=/repo/A.cs".
         var output = T.CaptureOut(() => Reporter.Write(Sample(), OutputFormat.GitHub, "/repo"));
         Assert.Contains("file=A.cs", output);
         Assert.Contains("file=B.cs", output);
@@ -274,8 +272,7 @@ public class ReporterTests
         Assert.Contains("%2C", output);
     }
 
-    // Regression tests for GitHub Actions annotation escaping (fix #16).
-    // These tests fail on the old code (raw interpolation) and pass on the fix.
+    // Regression tests for GitHub Actions annotation escaping.
 
     [Fact]
     public void GitHub_escapes_newline_in_message()
@@ -399,7 +396,7 @@ public class PathFilterTests
 }
 
 /// <summary>
-/// Regression tests for issue #9: bare relative globs (*.cs, **/*.cs) must enumerate the
+/// Regression tests for bare relative globs (*.cs, **/*.cs) must enumerate the
 /// current directory, not the filesystem root.
 /// </summary>
 public class PathFilterExpandGlobTests : IDisposable
@@ -431,8 +428,8 @@ public class PathFilterExpandGlobTests : IDisposable
     [Fact]
     public void BareStarGlob_enumerates_current_directory()
     {
-        // On the old code this returned [] (started at "/" and either threw or found nothing
-        // relative to cwd). With the fix it must return Sample.cs.
+        // A bare "*.cs" glob must enumerate the current directory and return Sample.cs,
+        // rather than anchoring at "/".
         // Use the expected absolute path constructed from the resolved cwd to avoid symlink mismatches.
         var expected = Path.Combine(Directory.GetCurrentDirectory(), FileName);
         var results = PathFilter.ExpandTarget("*.cs")

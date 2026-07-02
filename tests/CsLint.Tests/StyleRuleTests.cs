@@ -42,7 +42,7 @@ public class StyleRuleTests
     public void CS010_does_not_apply_without_keys() =>
         Assert.False(new VarStyleRule().AppliesTo(T.Cfg(("indent_style", "tab"))));
 
-    // Regression #20 — BUG 1: nullable built-in types must be routed through
+    // Regression: nullable built-in types must be routed through
     // csharp_style_var_for_built_in_types, not var_elsewhere.
 
     [Fact]
@@ -50,8 +50,8 @@ public class StyleRuleTests
     {
         // string? is a nullable built-in; with var_for_built_in_types=false it should be
         // handled by that key (no flag) rather than spilling into var_elsewhere.
-        // Use a method-call initializer so TypeApparentFromInitializer returns false
-        // and the old code's fall-through-to-elsewhere bug is directly exercised.
+        // Use a method-call initializer so TypeApparentFromInitializer returns false and the
+        // built-in nullable is routed by var_for_built_in_types, not var_elsewhere.
         var diags = await T.Run(new VarStyleRule(),
             "class C { string? F() => null; void M() { string? x = F(); } }",
             T.Cfg(
@@ -84,7 +84,7 @@ public class StyleRuleTests
         Assert.True(diags.Has("CS010"));
     }
 
-    // Regression #20 — BUG 2: null-literal initializers must not reach any branch
+    // Regression: null-literal initializers must not reach any branch
     // because `var x = null` does not compile (CS0815).
 
     [Fact]
@@ -436,7 +436,7 @@ public class StyleRuleTests
         Assert.False(diags.Has("CS040"));
     }
 
-    // Bug #23 regression tests — per-rule severity: none/silent suppresses; suggestion maps to info.
+    // per-rule severity: none/silent suppresses; suggestion maps to info.
 
     static FileConfig MethodNamingCfgWithSeverity(string severity) => T.Cfg(
         ("dotnet_naming_rule.methods.symbols", "method_group"),

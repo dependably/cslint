@@ -91,7 +91,7 @@ public class SemanticEngineTests
         Assert.True(ok || error != null);
     }
 
-    // Bug #23 follow-up (Finding 2): SemanticEngine must align with LintEngine — both must map
+    // SemanticEngine must align with LintEngine — both must map
     // dotnet_diagnostic.<Id>.severity = suggestion to Severity.Info (not Severity.Warning).
 
     [Fact]
@@ -223,14 +223,14 @@ public class SemanticEngineTests
         Assert.Contains(diags, d => d.Rule == "IDE0005" && d.Line == 1);
     }
 
-    // ── Fix #12: Case-sensitive boolean value checks ───────────────────────────
-    // These tests fail on the old code (which used raw .Contains("true")) because
-    // "True" does not contain lowercase "true" (ordinal comparison).
+    // ── Case-sensitive boolean value checks ───────────────────────────
+    // Boolean editorconfig values must be matched case-insensitively: a raw .Contains("true")
+    // misses "True" (capital T) under ordinal comparison.
 
     [Fact]
     public void CheckReadonlyFields_respects_TitleCase_True()
     {
-        // "True" (capital T) must activate the rule — old code silently disabled it.
+        // "True" (capital T) must activate the rule.
         var (root, model) = Compile(
             "class C { private int x; public C() { x = 1; } }");
         var diags = CsLint.SemanticEngine.CheckReadonlyFields(

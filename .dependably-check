@@ -1,5 +1,5 @@
 {
   "cslint": {
-    "exclude": ["tests/fixtures/**", "tests/**"]
+    "exclude": ["tests/**"]
   }
 }

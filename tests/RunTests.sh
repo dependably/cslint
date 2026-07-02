@@ -85,7 +85,7 @@ check "OP005 bool flags"      "OP005" --scan "$FIXTURE_DIR/opinionated/OP005_Boo
 check "OP006 cancel token"    "OP006" --scan "$FIXTURE_DIR/opinionated/OP006_MissingCancellationToken.cs"
 
 echo
-echo "=== Tool features (v4.1: exclude / editorconfig suppression / OP005 refinement) ==="
+echo "=== Suppression and exclusion ==="
 check_absent "OP005 ignores out bool"            "OP005"   --scan "$FIXTURE_DIR/opinionated/OP005_OutRefBool.cs"
 check_absent "OP005 ignores implicitly private"  "OP005"   --scan "$FIXTURE_DIR/opinionated/OP005_ImplicitlyPrivate.cs"
 check_absent "SAST002 silenced via editorconfig" "SAST002" --sast "$FIXTURE_DIR/suppress/ConsoleApp.cs"
