@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.Build.Locator;
+using CsLint.Rules;
 
 namespace CsLint;
 
@@ -114,8 +115,8 @@ class SemanticEngine
     internal static List<Diagnostic> CheckReadonlyFields(
         string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
-        if (!config.Properties.TryGetValue("dotnet_style_readonly_field", out var val) ||
-            !val.Contains("true")) return [];
+        if (!StyleHelper.TryGet(config, "dotnet_style_readonly_field", out var val, out _) ||
+            !val.StartsWith("true", StringComparison.Ordinal)) return [];
 
         var diagnostics = new List<Diagnostic>();
 
@@ -158,8 +159,8 @@ class SemanticEngine
         string filePath, SyntaxNode root, SemanticModel model, FileConfig config)
     {
         var diagnostics = new List<Diagnostic>();
-        var varForBuiltin = config.Properties.TryGetValue("csharp_style_var_for_built_in_types", out var vfb) && vfb.Contains("true");
-        var varWhenApparent = config.Properties.TryGetValue("csharp_style_var_when_type_is_apparent", out var vwa) && vwa.Contains("true");
+        var varForBuiltin = StyleHelper.TryGet(config, "csharp_style_var_for_built_in_types", out var vfb, out _) && vfb.StartsWith("true", StringComparison.Ordinal);
+        var varWhenApparent = StyleHelper.TryGet(config, "csharp_style_var_when_type_is_apparent", out var vwa, out _) && vwa.StartsWith("true", StringComparison.Ordinal);
 
         foreach (var decl in root.DescendantNodes().OfType<LocalDeclarationStatementSyntax>()
                      .Select(local => local.Declaration))
