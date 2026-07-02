@@ -456,6 +456,39 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST008"));
     }
 
+    // False-positive slot-position regression tests (Ticket #10 follow-up)
+    // These must NOT produce SAST008: the identifier named "dynamic" is NOT in a type position.
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_cast_operand()
+    {
+        // (string)dynamic — dynamic is the *operand* of the cast, not the type being cast to.
+        // CastExpressionSyntax.Expression == node; CastExpressionSyntax.Type != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var x = (string)dynamic; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_as_left_operand()
+    {
+        // dynamic as string — dynamic is the *left* operand of 'as', not the target type.
+        // BinaryExpressionSyntax.Left == node; BinaryExpressionSyntax.Right != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var x = dynamic as string; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_foreach_collection()
+    {
+        // foreach (var x in dynamic) — dynamic is the *collection expression*, not the iteration-variable type.
+        // ForEachStatementSyntax.Expression == node; ForEachStatementSyntax.Type != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M(IEnumerable<string> dynamic) { foreach (var x in dynamic) { } } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {

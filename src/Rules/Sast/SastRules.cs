@@ -612,33 +612,34 @@ sealed class DynamicUsageRule : IRule
     // Returns true when the 'dynamic' identifier appears in a type position — i.e. it is being
     // used as a type annotation rather than as a plain identifier/variable reference.
     //
-    // Parent kinds that represent type positions:
-    //   VariableDeclarationSyntax  — local variable type:            dynamic x = …
-    //   ParameterSyntax            — parameter type:                 void M(dynamic d)
-    //   PropertyDeclarationSyntax  — property return type:           dynamic Prop { … }
-    //   ReturnStatementSyntax      — not a type position per se, but kept for the case where
-    //                                the rule historically matched it (note: MethodDeclaration
-    //                                covers the return-type annotation case more precisely)
-    //   MethodDeclarationSyntax    — method return type:             dynamic M()
-    //   CastExpressionSyntax       — explicit cast:                  (dynamic)obj
-    //   ArrayTypeSyntax            — element type of array:          dynamic[]
-    //   TypeArgumentListSyntax     — generic type argument:          List<dynamic>
-    //   ForEachStatementSyntax     — iteration variable type:        foreach (dynamic d in …)
-    //   BinaryExpressionSyntax     — 'as' expression right operand:  obj as dynamic
-    //                               (checked to be AsExpression kind to avoid false positives)
+    // Each arm is constrained to the specific child slot that carries the type, so that an
+    // identifier merely NAMED "dynamic" in a non-type slot is never falsely flagged.
+    //
+    // Parent kinds and the type slot checked:
+    //   VariableDeclarationSyntax  — .Type:            dynamic x = …
+    //   ParameterSyntax            — .Type:            void M(dynamic d)   (name is a SyntaxToken)
+    //   PropertyDeclarationSyntax  — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
+    //   MethodDeclarationSyntax    — .ReturnType:      dynamic M()         (name is a SyntaxToken)
+    //   CastExpressionSyntax       — .Type:            (dynamic)obj        (not the operand)
+    //   ArrayTypeSyntax            — .ElementType:     dynamic[]
+    //   TypeArgumentListSyntax     — .Arguments:       List<dynamic>
+    //   ForEachStatementSyntax     — .Type:            foreach (dynamic d in …) (not the collection)
+    //   BinaryExpressionSyntax     — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //
+    // ReturnStatementSyntax is intentionally absent: `return dynamic;` has dynamic as an expression,
+    // not a type annotation, so including it would produce false positives on variables named dynamic.
     static bool IsInTypePosition(IdentifierNameSyntax node) =>
         node.Parent switch
         {
-            VariableDeclarationSyntax => true,
-            ParameterSyntax           => true,
-            PropertyDeclarationSyntax => true,
-            ReturnStatementSyntax     => true,
-            MethodDeclarationSyntax   => true,
-            CastExpressionSyntax      => true,
-            ArrayTypeSyntax           => true,
-            TypeArgumentListSyntax    => true,
-            ForEachStatementSyntax    => true,
-            BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression),
-            _                         => false
+            VariableDeclarationSyntax v  => v.Type == node,
+            ParameterSyntax p            => p.Type == node,
+            PropertyDeclarationSyntax p  => p.Type == node,
+            MethodDeclarationSyntax m    => m.ReturnType == node,
+            CastExpressionSyntax c       => c.Type == node,
+            ArrayTypeSyntax a            => a.ElementType == node,
+            TypeArgumentListSyntax t     => t.Arguments.Contains(node),
+            ForEachStatementSyntax fe    => fe.Type == node,
+            BinaryExpressionSyntax bin   => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
+            _                            => false
         };
 }
