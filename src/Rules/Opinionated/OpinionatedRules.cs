@@ -244,17 +244,27 @@ sealed class BooleanParameterRule : IRule
     static string NormalizeTypeName(string typeName) =>
         typeName.EndsWith('?') ? typeName[..^1] : typeName;
 
-    // Returns true when the method looks like an ASP.NET Identity store setter: a Set*Async method
-    // with a bool parameter on a class/struct whose base list includes at least one I*Store interface
-    // name. Such bool parameters are dictated by the Identity framework contract (e.g.
-    // IUserEmailStore.SetEmailConfirmedAsync, IUserTwoFactorStore.SetTwoFactorEnabledAsync) and are
-    // not freely chosen by the implementing class.
+    // The closed set of ASP.NET Identity store bool-setter method names whose bool parameters are
+    // dictated by the framework contract, not freely chosen by the implementing class.
+    // Sources: IUserEmailStore, IUserPhoneNumberStore, IUserTwoFactorStore, IUserLockoutStore.
+    static readonly HashSet<string> KnownIdentityStoreBoolSetters =
+    [
+        "SetEmailConfirmedAsync",
+        "SetPhoneNumberConfirmedAsync",
+        "SetTwoFactorEnabledAsync",
+        "SetLockoutEnabledAsync",
+    ];
+
+    // Returns true when the method is one of the well-known ASP.NET Identity store bool setters
+    // on a class/struct whose base list includes at least one I*Store interface name. Both
+    // conditions must hold: the exact method name must appear in KnownIdentityStoreBoolSetters
+    // (a closed set) AND the containing type must list an I*Store in its base list. This prevents
+    // suppressing unrelated Set*Async(bool) methods on user-defined stores (e.g. IEventStore,
+    // IDocumentStore) that happen to share the naming pattern.
     static bool IsKnownIdentityStoreContractMethod(MethodDeclarationSyntax method)
     {
         var name = method.Identifier.Text;
-        if (!name.StartsWith("Set", StringComparison.Ordinal)
-            || !name.EndsWith("Async", StringComparison.Ordinal))
-            return false;
+        if (!KnownIdentityStoreBoolSetters.Contains(name)) return false;
 
         // Must carry at least one by-value bool parameter (the one that would be flagged).
         if (!method.ParameterList.Parameters.Any(IsFlagParameter)) return false;

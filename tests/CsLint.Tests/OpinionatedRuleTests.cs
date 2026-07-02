@@ -245,6 +245,23 @@ public class OpinionatedRuleTests
         Assert.True(diags.Has("OP005"));
     }
 
+    // Boundary / mutation-pin for the Identity-store gate: a Set*Async(bool) whose name is NOT in
+    // the closed allowlist must still fire, even when the class lists an I*Store in its base list.
+    // A class implementing IEventStore (or any other user-defined I*Store) owns its own API surface;
+    // the bool parameter is not dictated by an ASP.NET Identity contract.
+    // This test FAILS on the over-broad heuristic (StartsWith("Set") && EndsWith("Async"))
+    // and PASSES after narrowing to the exact-name allowlist.
+    [Fact]
+    public async Task OP005_still_flags_non_identity_set_async_bool_on_unrelated_istore()
+    {
+        const string code =
+            "using System.Threading; using System.Threading.Tasks; " +
+            "class WidgetStore : IEventStore { " +
+            "public Task SetVerboseAsync(bool verbose, CancellationToken ct) => Task.CompletedTask; }";
+        var diags = await T.Run(new BooleanParameterRule(On), code);
+        Assert.True(diags.Has("OP005"));
+    }
+
     // Regression #24 follow-up (Finding 2): name+count-only matching of in-file interface methods
     // suppressed unrelated bool-flag overloads whose parameter types differ from those of the matched
     // interface method. An overload whose parameter types do NOT match the interface must still flag.
