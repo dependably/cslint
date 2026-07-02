@@ -268,6 +268,42 @@ public class SastRuleTests
     }
 
     [Fact]
+    public async Task SAST005_flags_chained_discarded_configureawait()
+    {
+        // GetMethodName returns "ConfigureAwait" (not *Async) for the outer call;
+        // the chain must be unwrapped to still recognise the discarded async task.
+        var diags = await T.Run(new FireAndForgetRule(),
+            "class C { void M() { _ = DoWorkAsync().ConfigureAwait(false); } }");
+        Assert.True(diags.Has("SAST005"));
+    }
+
+    [Fact]
+    public async Task SAST005_flags_chained_statement_configureawait()
+    {
+        var diags = await T.Run(new FireAndForgetRule(),
+            "class C { void M() { DoWorkAsync().ConfigureAwait(false); } }");
+        Assert.True(diags.Has("SAST005"));
+    }
+
+    [Fact]
+    public async Task SAST005_does_not_flag_explicit_continuation()
+    {
+        // ContinueWith is an explicit fault-observation continuation, not a
+        // transparent wrapper — leave it un-flagged to avoid false positives.
+        var diags = await T.Run(new FireAndForgetRule(),
+            "class C { void M() { _ = DoWorkAsync().ContinueWith(t => { }); } }");
+        Assert.False(diags.Has("SAST005"));
+    }
+
+    [Fact]
+    public async Task SAST005_does_not_flag_non_async_chain()
+    {
+        var diags = await T.Run(new FireAndForgetRule(),
+            "class C { void M() { _ = DoWork().ConfigureAwait(false); } }");
+        Assert.False(diags.Has("SAST005"));
+    }
+
+    [Fact]
     public async Task SAST006_flags_unjustified_pragma()
     {
         var diags = await T.Run(new PragmaDisableRule(),

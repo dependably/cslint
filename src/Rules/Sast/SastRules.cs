@@ -392,8 +392,8 @@ sealed class FireAndForgetRule : IRule
     void CheckUnawaited(string filePath, ExpressionStatementSyntax stmt, List<Diagnostic> diagnostics)
     {
         if (stmt.Expression is not InvocationExpressionSyntax invocation) return;
-        var methodName = GetMethodName(invocation);
-        if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) return;
+        var methodName = GetAsyncChainMethodName(invocation);
+        if (methodName == null) return;
         if (IsInsideAwaitExpression(stmt)) return;
 
         var loc = stmt.GetLocation().GetLineSpan();
@@ -406,12 +406,12 @@ sealed class FireAndForgetRule : IRule
     {
         if (assignment.Left is not IdentifierNameSyntax id || id.Identifier.Text != "_") return;
         if (assignment.Right is not InvocationExpressionSyntax invocation) return;
-        var methodName = GetMethodName(invocation);
-        if (methodName == null || !methodName.EndsWith("Async", StringComparison.Ordinal)) return;
+        var methodName = GetAsyncChainMethodName(invocation);
+        if (methodName == null) return;
 
         var loc = assignment.GetLocation().GetLineSpan();
         diagnostics.Add(new(filePath, loc.StartLinePosition.Line + 1, 1, Id,
-            $"Fire-and-forget via discard: '{methodName}' exceptions discarded. Consider .ConfigureAwait or explicit error handling.",
+            $"Fire-and-forget via discard: '{methodName}' result discarded without awaiting; exceptions are silently lost. Await the task or observe it explicitly.",
             Severity.Warning));
     }
 
@@ -419,6 +419,38 @@ sealed class FireAndForgetRule : IRule
         node.Parent is AwaitExpressionSyntax ||
         node.Parent is ExpressionStatementSyntax p &&
         p.Parent?.DescendantNodes().OfType<AwaitExpressionSyntax>().Any() == true;
+
+    // Returns the name of the inner-most *Async method in the invocation chain, or null.
+    // Exception-transparent wrappers such as .ConfigureAwait are unwrapped so that
+    // 'DoWorkAsync().ConfigureAwait(false)' is still recognised as fire-and-forget.
+    // Explicit fault-handling continuations (.ContinueWith) are treated as deliberate
+    // observation of the task and are intentionally left un-flagged.
+    static string? GetAsyncChainMethodName(InvocationExpressionSyntax invocation)
+    {
+        var current = invocation;
+        while (true)
+        {
+            var name = GetMethodName(current);
+            if (name != null && name.EndsWith("Async", StringComparison.Ordinal))
+                return name;
+
+            // Only keep unwrapping through exception-transparent wrappers.
+            if (name != null && ExceptionTransparentWrappers.Contains(name) &&
+                current.Expression is MemberAccessExpressionSyntax member &&
+                member.Expression is InvocationExpressionSyntax inner)
+            {
+                current = inner;
+                continue;
+            }
+
+            return null;
+        }
+    }
+
+    static readonly HashSet<string> ExceptionTransparentWrappers = new(StringComparer.Ordinal)
+    {
+        "ConfigureAwait",
+    };
 
     static string? GetMethodName(InvocationExpressionSyntax invocation) =>
         invocation.Expression switch
