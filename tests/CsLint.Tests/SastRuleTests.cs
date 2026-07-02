@@ -321,6 +321,103 @@ public class SastRuleTests
         Assert.False(diags.Has("SAST004"));
     }
 
+    // Regression (#21): kebab-case display names like "edge-access" must not be flagged as
+    // hardcoded credentials. The value is a token display name; the real credential lives
+    // elsewhere (e.g. an env var stored hashed). Mirrors the dotted-lowercase arm for
+    // reverse-DNS event types.
+    [Theory]
+    [InlineData("public const string TokenName = \"edge-access\";")]          // token display name (exact dogfood repro)
+    [InlineData("public const string ServiceToken = \"some-service-name\";")]  // multi-word kebab display name
+    public async Task SAST004_does_not_flag_kebab_case_display_names(string member)
+    {
+        var diags = await T.Run(new HardcodedSecretRule(), $"class C {{ {member} }}");
+        Assert.False(diags.Has("SAST004"));
+    }
+
+    // Positive control: a real high-entropy secret literal must still be flagged after the
+    // kebab fix (guards against over-broadening that lets genuine credentials escape).
+    [Fact]
+    public async Task SAST004_still_flags_high_entropy_secret_after_kebab_fix()
+    {
+        var diags = await T.Run(new HardcodedSecretRule(),
+            "class C { void M() { string apiKey = \"sk_live_abc123\"; } }");
+        Assert.True(diags.Has("SAST004"));
+    }
+
+    // Mixed partial-failure: a file with both kebab display-name constants and a real secret —
+    // only the genuine credential must fire.
+    [Fact]
+    public async Task SAST004_mixed_kebab_and_real_secret_flags_only_real_secret()
+    {
+        const string code = """
+            class C
+            {
+                public const string TokenName = "edge-access";
+                public const string ServiceName = "some-service-name";
+                string apiKey = "sk_live_abc123";
+            }
+            """;
+        var diags = await T.Run(new HardcodedSecretRule(), code);
+        var sast004 = diags.Where(d => d.Rule == "SAST004").ToList();
+        // Exactly 1: only the high-entropy apiKey literal, not the two kebab display names.
+        Assert.Single(sast004);
+    }
+
+    // Mutation-pin (#21 follow-up): hyphenated tokens with digits must still be flagged —
+    // verifies the kebab arm is restricted to letters+hyphens only (no digits).
+    // These tests fail if someone widens the arm back to IsLetterOrDigit.
+    [Theory]
+    [InlineData("string apiKey = \"xoxb-2534-abcdefghij-klmno\";")]           // Slack-style token (digits in segments)
+    [InlineData("string apiKey = \"550e8400-e29b-41d4-a716-446655440000\";")]  // UUID-shaped API key
+    public async Task SAST004_still_flags_digit_bearing_hyphenated_token(string member)
+    {
+        var diags = await T.Run(new HardcodedSecretRule(), $"class C {{ void M() {{ {member} }} }}");
+        Assert.True(diags.Has("SAST004"),
+            $"Expected SAST004 for digit-bearing hyphenated token; kebab exemption must not apply to values containing digits.");
+    }
+
+    // Mixed partial-failure (#21 follow-up): a file with a clean kebab display name alongside a
+    // digit-bearing hyphenated token — only the token must fire.
+    [Fact]
+    public async Task SAST004_mixed_clean_kebab_and_digit_token_flags_only_token()
+    {
+        const string code = """
+            class C
+            {
+                public const string TokenName = "edge-access";
+                string apiKey = "xoxb-2534-abcdefghij-klmno";
+            }
+            """;
+        var diags = await T.Run(new HardcodedSecretRule(), code);
+        var sast004 = diags.Where(d => d.Rule == "SAST004").ToList();
+        // Exactly 1: only the Slack-style token, not the clean kebab display name.
+        Assert.Single(sast004);
+    }
+
+    // Placeholder parity (#21 follow-up): "your-secret-here" must behave identically to its
+    // underscore twin "your_secret_here" — both are in PlaceholderValues and must not be
+    // silenced by the kebab-display-name exemption.
+    [Theory]
+    [InlineData("string password = \"your-secret-here\";")]
+    [InlineData("string password = \"your_secret_here\";")]
+    public async Task SAST004_flags_placeholder_twins_consistently(string member)
+    {
+        var diags = await T.Run(new HardcodedSecretRule(), $"class C {{ {member} }}");
+        Assert.True(diags.Has("SAST004"),
+            $"Placeholder value must not be silenced by the kebab-display-name exemption.");
+    }
+
+    // Placeholder in declaration (#21 follow-up): CheckDeclarator must surface placeholder values,
+    // not only CheckAssignment. Verifies the else-if placeholder arm is present in both paths.
+    [Fact]
+    public async Task SAST004_flags_placeholder_in_declaration()
+    {
+        var diags = await T.Run(new HardcodedSecretRule(),
+            "class C { string s = \"your-secret-here\"; }");
+        Assert.True(diags.Has("SAST004"),
+            "Placeholder value in a variable declaration must be flagged.");
+    }
+
     [Fact]
     public async Task SAST005_flags_fire_and_forget()
     {
