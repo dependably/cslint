@@ -541,9 +541,13 @@ public class SastRuleTests
     [Fact]
     public async Task SAST008_flags_declaration_expression_out_dynamic()
     {
-        // M(out dynamic d) — DeclarationExpressionSyntax parent, Type slot; previously not flagged
+        // M(out dynamic d) — DeclarationExpressionSyntax parent, Type slot; previously not flagged.
+        // The helper takes `out object` so the ONLY dynamic in the snippet is the declaration
+        // expression — otherwise the helper's own `out dynamic` parameter satisfies
+        // Has("SAST008") via the pre-existing ParameterSyntax arm and the test cannot pin
+        // the DeclarationExpressionSyntax arm.
         var diags = await T.Run(new DynamicUsageRule(),
-            "class C { void M() { Parse(out dynamic d); } void Parse(out dynamic x) { x = 1; } }");
+            "class C { void M() { Parse(out dynamic d); } void Parse(out object x) { x = 1; } }");
         Assert.True(diags.Has("SAST008"));
     }
 
@@ -607,10 +611,11 @@ public class SastRuleTests
             """;
         var diags = await T.Run(new DynamicUsageRule(), code);
         var sast008 = diags.Where(d => d.Rule == "SAST008").ToList();
-        // NullableField (dynamic?), Fetcher return, TupleReturn return, Local return,
-        // Parse parameter (out dynamic x) declaration + Parse(out dynamic d) declaration =
-        // delegate dynamic + (dynamic x, ...) + dynamic? + dynamic Local + out dynamic d + out dynamic x = 6
-        Assert.True(sast008.Count >= 5, $"Expected at least 5 SAST008 findings, got {sast008.Count}");
+        // Exactly 6: dynamic? field + delegate return + tuple-element (dynamic x) + local-fn
+        // return + out-declaration (out dynamic d) + Parse's own `out dynamic x` parameter.
+        // Exact count (not >=) so deleting any single arm — or adding an over-broad one that
+        // flags the non-type slots in Clean() — fails the test.
+        Assert.Equal(6, sast008.Count);
     }
 
     [Fact]
