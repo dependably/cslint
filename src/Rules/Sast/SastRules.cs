@@ -596,9 +596,7 @@ sealed class DynamicUsageRule : IRule
         {
             if (node.Identifier.Text != "dynamic") continue;
 
-            if (node.Parent is VariableDeclarationSyntax or ParameterSyntax or
-                               PropertyDeclarationSyntax or ReturnStatementSyntax or
-                               MethodDeclarationSyntax)
+            if (IsInTypePosition(node))
             {
                 var loc = node.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -610,4 +608,37 @@ sealed class DynamicUsageRule : IRule
 
         return diagnostics;
     }
+
+    // Returns true when the 'dynamic' identifier appears in a type position — i.e. it is being
+    // used as a type annotation rather than as a plain identifier/variable reference.
+    //
+    // Parent kinds that represent type positions:
+    //   VariableDeclarationSyntax  — local variable type:            dynamic x = …
+    //   ParameterSyntax            — parameter type:                 void M(dynamic d)
+    //   PropertyDeclarationSyntax  — property return type:           dynamic Prop { … }
+    //   ReturnStatementSyntax      — not a type position per se, but kept for the case where
+    //                                the rule historically matched it (note: MethodDeclaration
+    //                                covers the return-type annotation case more precisely)
+    //   MethodDeclarationSyntax    — method return type:             dynamic M()
+    //   CastExpressionSyntax       — explicit cast:                  (dynamic)obj
+    //   ArrayTypeSyntax            — element type of array:          dynamic[]
+    //   TypeArgumentListSyntax     — generic type argument:          List<dynamic>
+    //   ForEachStatementSyntax     — iteration variable type:        foreach (dynamic d in …)
+    //   BinaryExpressionSyntax     — 'as' expression right operand:  obj as dynamic
+    //                               (checked to be AsExpression kind to avoid false positives)
+    static bool IsInTypePosition(IdentifierNameSyntax node) =>
+        node.Parent switch
+        {
+            VariableDeclarationSyntax => true,
+            ParameterSyntax           => true,
+            PropertyDeclarationSyntax => true,
+            ReturnStatementSyntax     => true,
+            MethodDeclarationSyntax   => true,
+            CastExpressionSyntax      => true,
+            ArrayTypeSyntax           => true,
+            TypeArgumentListSyntax    => true,
+            ForEachStatementSyntax    => true,
+            BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression),
+            _                         => false
+        };
 }

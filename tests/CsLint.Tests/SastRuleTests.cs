@@ -399,6 +399,63 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST008"));
     }
 
+    // Regression tests for missed type positions (Ticket #10)
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_cast()
+    {
+        // (dynamic)obj — CastExpressionSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object obj) { var x = (dynamic)obj; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_as_expression()
+    {
+        // obj as dynamic — BinaryExpressionSyntax (AsExpression) parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object obj) { var x = obj as dynamic; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_type_argument()
+    {
+        // List<dynamic> — TypeArgumentListSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M() { var x = new List<dynamic>(); } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_array()
+    {
+        // dynamic[] — ArrayTypeSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { dynamic[] arr = new dynamic[3]; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_foreach()
+    {
+        // foreach (dynamic d in ...) — ForEachStatementSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M(IEnumerable<object> items) { foreach (dynamic d in items) { } } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_variable_name_in_member_access()
+    {
+        // A local named "dynamic" used as a member access target should not be flagged —
+        // its parent is MemberAccessExpressionSyntax, which is not a type position.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { var dynamic = new System.Object(); var r = dynamic.ToString(); } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {
