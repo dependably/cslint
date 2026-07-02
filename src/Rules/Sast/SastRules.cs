@@ -596,9 +596,7 @@ sealed class DynamicUsageRule : IRule
         {
             if (node.Identifier.Text != "dynamic") continue;
 
-            if (node.Parent is VariableDeclarationSyntax or ParameterSyntax or
-                               PropertyDeclarationSyntax or ReturnStatementSyntax or
-                               MethodDeclarationSyntax)
+            if (IsInTypePosition(node))
             {
                 var loc = node.GetLocation().GetLineSpan();
                 diagnostics.Add(new(filePath,
@@ -610,4 +608,38 @@ sealed class DynamicUsageRule : IRule
 
         return diagnostics;
     }
+
+    // Returns true when the 'dynamic' identifier appears in a type position — i.e. it is being
+    // used as a type annotation rather than as a plain identifier/variable reference.
+    //
+    // Each arm is constrained to the specific child slot that carries the type, so that an
+    // identifier merely NAMED "dynamic" in a non-type slot is never falsely flagged.
+    //
+    // Parent kinds and the type slot checked:
+    //   VariableDeclarationSyntax  — .Type:            dynamic x = …
+    //   ParameterSyntax            — .Type:            void M(dynamic d)   (name is a SyntaxToken)
+    //   PropertyDeclarationSyntax  — .Type:            dynamic Prop { … }  (name is a SyntaxToken)
+    //   MethodDeclarationSyntax    — .ReturnType:      dynamic M()         (name is a SyntaxToken)
+    //   CastExpressionSyntax       — .Type:            (dynamic)obj        (not the operand)
+    //   ArrayTypeSyntax            — .ElementType:     dynamic[]
+    //   TypeArgumentListSyntax     — .Arguments:       List<dynamic>
+    //   ForEachStatementSyntax     — .Type:            foreach (dynamic d in …) (not the collection)
+    //   BinaryExpressionSyntax     — .Right + AsExpr:  obj as dynamic      (not the left operand)
+    //
+    // ReturnStatementSyntax is intentionally absent: `return dynamic;` has dynamic as an expression,
+    // not a type annotation, so including it would produce false positives on variables named dynamic.
+    static bool IsInTypePosition(IdentifierNameSyntax node) =>
+        node.Parent switch
+        {
+            VariableDeclarationSyntax v => v.Type == node,
+            ParameterSyntax p => p.Type == node,
+            PropertyDeclarationSyntax p => p.Type == node,
+            MethodDeclarationSyntax m => m.ReturnType == node,
+            CastExpressionSyntax c => c.Type == node,
+            ArrayTypeSyntax a => a.ElementType == node,
+            TypeArgumentListSyntax t => t.Arguments.Contains(node),
+            ForEachStatementSyntax fe => fe.Type == node,
+            BinaryExpressionSyntax bin => bin.IsKind(SyntaxKind.AsExpression) && bin.Right == node,
+            _ => false
+        };
 }

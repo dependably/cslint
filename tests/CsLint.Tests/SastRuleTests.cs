@@ -399,6 +399,96 @@ public class SastRuleTests
         Assert.True(diags.Has("SAST008"));
     }
 
+    // Regression tests for missed type positions (Ticket #10)
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_cast()
+    {
+        // (dynamic)obj — CastExpressionSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object obj) { var x = (dynamic)obj; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_as_expression()
+    {
+        // obj as dynamic — BinaryExpressionSyntax (AsExpression) parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object obj) { var x = obj as dynamic; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_type_argument()
+    {
+        // List<dynamic> — TypeArgumentListSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M() { var x = new List<dynamic>(); } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_array()
+    {
+        // dynamic[] — ArrayTypeSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { dynamic[] arr = new dynamic[3]; } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_flags_dynamic_foreach()
+    {
+        // foreach (dynamic d in ...) — ForEachStatementSyntax parent; previously not flagged
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M(IEnumerable<object> items) { foreach (dynamic d in items) { } } }");
+        Assert.True(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_variable_name_in_member_access()
+    {
+        // A local named "dynamic" used as a member access target should not be flagged —
+        // its parent is MemberAccessExpressionSyntax, which is not a type position.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M() { var dynamic = new System.Object(); var r = dynamic.ToString(); } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    // False-positive slot-position regression tests (Ticket #10 follow-up)
+    // These must NOT produce SAST008: the identifier named "dynamic" is NOT in a type position.
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_cast_operand()
+    {
+        // (string)dynamic — dynamic is the *operand* of the cast, not the type being cast to.
+        // CastExpressionSyntax.Expression == node; CastExpressionSyntax.Type != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var x = (string)dynamic; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_as_left_operand()
+    {
+        // dynamic as string — dynamic is the *left* operand of 'as', not the target type.
+        // BinaryExpressionSyntax.Left == node; BinaryExpressionSyntax.Right != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "class C { void M(object dynamic) { var x = dynamic as string; } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
+    [Fact]
+    public async Task SAST008_clean_when_dynamic_is_foreach_collection()
+    {
+        // foreach (var x in dynamic) — dynamic is the *collection expression*, not the iteration-variable type.
+        // ForEachStatementSyntax.Expression == node; ForEachStatementSyntax.Type != node.
+        var diags = await T.Run(new DynamicUsageRule(),
+            "using System.Collections.Generic; class C { void M(IEnumerable<string> dynamic) { foreach (var x in dynamic) { } } }");
+        Assert.False(diags.Has("SAST008"));
+    }
+
     [Fact]
     public void Sast_rules_apply_to_any_file()
     {
