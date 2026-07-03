@@ -15,7 +15,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>cslint</ToolCommandName>
     <PackageId>Dependably.CsLint</PackageId>
-    <Version>4.1.0</Version>
+    <Version>4.1.1</Version>
     <Authors>MHiland &lt;michael@dependably.ca&gt;</Authors>
     <Company>Dependably</Company>
     <Description>C# linter: EditorConfig enforcement + syntactic SAST + Roslyn semantic analysis + opinionated pattern checks. Part of the Dependably suite (quantitative metrics live in Dependably.CodeMetrics).</Description>
