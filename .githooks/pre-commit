@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# Pre-commit hook for cslint (tracked; install by running
+# `git config core.hooksPath .githooks`).
+#
+# Gates a commit on:
+#   1. `dotnet format` (hard gate)
+#   2. cslint dogfooding itself against its own source (hard gate)
+#   3. cross-dogfooding the sibling Dependably .NET tools, nucheck + codemetrics,
+#      against this repo's own dependencies/source (hard gate; skipped with a
+#      warning if a tool isn't installed globally)
+#   4. the test suite (advisory)
+#
+# Note: this is unrelated to `cslint --install-hook`, which writes a hook straight
+# to .git/hooks/pre-commit for cslint's *consumers*. This hook is the suite-wide,
+# tracked convention shared with the sibling repos.
+
+echo "Running pre-commit checks..."
+
+if ! command -v dotnet &> /dev/null; then
+  echo "Error: dotnet SDK is not installed."
+  exit 1
+fi
+
+# 1. Formatting — hard gate
+echo "Verifying formatting (dotnet format)..."
+dotnet format --verify-no-changes cslint.csproj
+if [ $? -ne 0 ]; then
+  echo "Formatting issues found. Run 'dotnet format cslint.csproj' before committing."
+  exit 1
+fi
+
+# 2. Dogfood cslint on itself — hard gate.
+#    Runs the locally-built binary's SAST checks over this repo's own src/ (tests/ is
+#    already excluded via .dependably) and fails the commit on any error-level finding.
+echo "Dogfooding cslint on its own source..."
+dotnet run --project . --framework net10.0 -- --sast --global --fail-on severity=error
+if [ $? -ne 0 ]; then
+  echo "cslint found a blocking finding in its own source. Fix it before committing."
+  exit 1
+fi
+
+# 3. Cross-dogfood the sibling Dependably .NET tools — hard gate.
+#    nucheck and codemetrics are installed globally as dotnet tools; a tool that isn't
+#    installed is a warning + skip, not a hook failure — only a real finding blocks.
+echo "Cross-dogfooding sibling Dependably tools..."
+
+if command -v nucheck &> /dev/null; then
+  echo "  running nucheck packages.lock.json ..."
+  nucheck packages.lock.json --source osv --fail-on severity=high
+  if [ $? -ne 0 ]; then
+    echo "nucheck found a high-or-above finding in packages.lock.json. Fix it before committing."
+    exit 1
+  fi
+else
+  echo "  Warning: nucheck is not installed globally (dotnet tool install -g Dependably.NuCheck) — skipping."
+fi
+
+if command -v codemetrics &> /dev/null; then
+  echo "  running codemetrics ./src ..."
+  # Per-metric thresholds mirror codemetrics' own "high" severity band (there is no
+  # composite --fail-on severity=<level> in the currently-installed codemetrics build).
+  # DynamicUsageRule.IsInTypePosition is excluded: it is an intentional, exhaustive switch
+  # over ~25 mutually-exclusive Roslyn syntax-node cases (documented inline above the
+  # method), not accidental complexity — splitting it would only obscure the exhaustiveness
+  # the comment above it is there to preserve. It lives in its own file precisely so this
+  # exclude doesn't also blind the gate to the other seven SAST rules.
+  codemetrics ./src --exclude "**/DynamicUsageRule.cs" \
+    --fail-on cyclomatic=21 --fail-on cognitive=25 --fail-on nesting=6 --fail-on mi=20
+  if [ $? -ne 0 ]; then
+    echo "codemetrics found a blocking finding in this repo's C# source. Fix it before committing."
+    exit 1
+  fi
+else
+  echo "  Warning: codemetrics is not installed globally (dotnet tool install -g Dependably.CodeMetrics) — skipping."
+fi
+
+# 4. Test suite — advisory only (never blocks)
+echo "Running tests..."
+dotnet test tests/CsLint.Tests/CsLint.Tests.csproj -c Release 2>/dev/null
+if [ $? -ne 0 ]; then
+  echo "Warning: some tests failed. Review the output above."
+  echo "Run 'dotnet test tests/CsLint.Tests/CsLint.Tests.csproj' for the full suite."
+  # Don't exit 1 here — allow commit with warning
+fi
+
+echo "Pre-commit checks complete."
+exit 0
