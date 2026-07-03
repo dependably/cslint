@@ -17,8 +17,21 @@ static class Reporter
     const int LineFieldWidth = 5;
     const int ColumnFieldWidth = 4;
 
+    // Canonical severity words are padded to this width so the message column stays aligned
+    // ("warning" is the widest at 7 chars).
+    const int SeverityFieldWidth = 7;
+
     // The shared Dependably finding schema version this JSON envelope conforms to.
     const string SchemaVersion = "1.0";
+
+    // Default number of findings the human report prints before collapsing the remainder into a
+    // "…and N more" note; raise it with --max-findings or lift it entirely with --no-limit.
+    const int DefaultMaxFindings = 200;
+
+    // Within a severity section, after this many findings of the same rule are printed, further
+    // occurrences of that rule are collapsed into a single "+N more <RULE> in M files" line so a
+    // single noisy rule can't bury everything else.
+    const int PerRuleCollapseThreshold = 10;
 
     public static void Write(
         IReadOnlyList<Diagnostic> diagnostics,
@@ -26,17 +39,24 @@ static class Reporter
         string root,
         int scanned = 0,
         int exitCode = 0,
-        string toolVersion = "")
+        string toolVersion = "",
+        int? maxFindings = null,
+        bool noLimit = false)
     {
         switch (format)
         {
-            case OutputFormat.Human: WriteHuman(diagnostics, root); break;
+            case OutputFormat.Human: WriteHuman(diagnostics, root, maxFindings, noLimit); break;
             case OutputFormat.Json: WriteJson(diagnostics, root, scanned, exitCode, toolVersion); break;
             case OutputFormat.GitHub: WriteGitHub(diagnostics, root); break;
         }
     }
 
-    static void WriteHuman(IReadOnlyList<Diagnostic> diagnostics, string root)
+    // Severities in report order: errors first so a handful of high-severity findings can never be
+    // buried under a flood of warnings/suggestions.
+    static readonly Severity[] SeverityDisplayOrder = [Severity.Error, Severity.Warning, Severity.Info];
+
+    static void WriteHuman(
+        IReadOnlyList<Diagnostic> diagnostics, string root, int? maxFindings, bool noLimit)
     {
         if (diagnostics.Count == 0)
         {
@@ -46,72 +66,139 @@ static class Reporter
             return;
         }
 
-        var groups = diagnostics
-            .OrderBy(d => GetCategory(d.Rule))
-            .ThenBy(d => d.File)
-            .ThenBy(d => d.Line)
-            .ThenBy(d => d.Column)
-            .GroupBy(d => GetCategory(d.Rule));
+        // --no-limit lifts the cap and disables per-rule collapse (a full, uncollapsed dump);
+        // otherwise a global cap and per-rule collapse keep large runs scannable.
+        var cap = noLimit ? int.MaxValue : (maxFindings ?? DefaultMaxFindings);
+        var collapse = !noLimit;
 
-        int errors = 0, warnings = 0, infos = 0;
+        int printed = 0;      // finding lines actually printed (counts toward the global cap)
+        int notShown = 0;     // findings suppressed purely by the global cap
 
-        foreach (var group in groups)
+        foreach (var severity in SeverityDisplayOrder)
         {
-            var (e, w, i) = WriteGroup(group, root);
-            errors += e;
-            warnings += w;
-            infos += i;
+            var inSection = diagnostics
+                .Where(d => d.Severity == severity)
+                .OrderBy(d => d.File, StringComparer.Ordinal)
+                .ThenBy(d => d.Line)
+                .ThenBy(d => d.Column)
+                .ToList();
+            if (inSection.Count == 0) continue;
+
+            Console.ForegroundColor = SeverityColor(severity);
+            Console.WriteLine($"\n  {SeverityWord(severity)}s");
+            Console.ResetColor();
+
+            var shownPerRule = new Dictionary<string, int>(StringComparer.Ordinal);
+            var collapsedPerRule = new Dictionary<string, (int Count, HashSet<string> Files)>(StringComparer.Ordinal);
+            string? currentFile = null;
+
+            foreach (var d in inSection)
+            {
+                // Per-rule collapse: once a rule has shown its quota in this section, tally the rest.
+                if (collapse && shownPerRule.GetValueOrDefault(d.Rule) >= PerRuleCollapseThreshold)
+                {
+                    var entry = collapsedPerRule.TryGetValue(d.Rule, out var c) ? c : (0, new HashSet<string>(StringComparer.Ordinal));
+                    entry.Item1++;
+                    entry.Item2.Add(d.File);
+                    collapsedPerRule[d.Rule] = entry;
+                    continue;
+                }
+
+                // Global cap: everything past it is counted and surfaced once at the end.
+                if (printed >= cap)
+                {
+                    notShown++;
+                    continue;
+                }
+
+                if (d.File != currentFile)
+                {
+                    Console.WriteLine($"\n  {RelativePath(root, d.File)}");
+                    currentFile = d.File;
+                }
+
+                WriteEntry(d);
+                printed++;
+                shownPerRule[d.Rule] = shownPerRule.GetValueOrDefault(d.Rule) + 1;
+            }
+
+            foreach (var (rule, info) in collapsedPerRule.OrderByDescending(kv => kv.Value.Count).ThenBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine(
+                    $"    +{info.Count} more {rule} in {info.Files.Count} file{(info.Files.Count != 1 ? "s" : "")}");
+                Console.ResetColor();
+            }
         }
 
+        if (notShown > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine(
+                $"\n  …and {notShown} more finding{(notShown != 1 ? "s" : "")} not shown " +
+                "(use --no-limit to show all, or --max-findings N to raise the cap).");
+            Console.ResetColor();
+        }
+
+        WriteFrequencyTable(diagnostics);
+
+        int errors = diagnostics.Count(d => d.Severity == Severity.Error);
+        int warnings = diagnostics.Count(d => d.Severity == Severity.Warning);
+        int infos = diagnostics.Count(d => d.Severity == Severity.Info);
         WriteSummary(errors, warnings, infos);
     }
 
-    static (int Errors, int Warnings, int Infos) WriteGroup(
-        IGrouping<int, Diagnostic> group, string root)
+    // A per-rule frequency table, most frequent first, so the worst offenders are obvious at a
+    // glance even when their individual findings were collapsed or capped above. Ends with a hint
+    // on how to silence a rule.
+    static void WriteFrequencyTable(IReadOnlyList<Diagnostic> diagnostics)
     {
+        var byRule = diagnostics
+            .GroupBy(d => d.Rule, StringComparer.Ordinal)
+            .Select(g => (Rule: g.Key, Count: g.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Rule, StringComparer.Ordinal)
+            .ToList();
+
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"\n  [{CategoryLabel(group.Key)}]");
+        Console.WriteLine("\n  Findings by rule:");
         Console.ResetColor();
 
-        string? currentFile = null;
-        int errors = 0, warnings = 0, infos = 0;
+        var width = byRule.Max(x => x.Rule.Length);
+        foreach (var (rule, count) in byRule)
+            Console.WriteLine($"    {rule.PadRight(width)}  {count}");
 
-        foreach (var d in group)
-        {
-            if (d.File != currentFile)
-            {
-                Console.WriteLine($"\n  {Path.GetRelativePath(root, d.File)}");
-                currentFile = d.File;
-            }
-
-            WriteEntry(d);
-            if (d.Severity == Severity.Error) errors++;
-            else if (d.Severity == Severity.Warning) warnings++;
-            else infos++;
-        }
-
-        return (errors, warnings, infos);
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine(
+            "  Hint: silence a rule with `dotnet_diagnostic.<RULE>.severity = none` in .editorconfig.");
+        Console.ResetColor();
     }
+
+    // The canonical severity vocabulary printed on every finding and in the summary:
+    // error / warning / info. (cslint's info tier is spelled `suggestion` in .editorconfig and is
+    // also accepted as the `suggestion` alias by --fail-on.)
+    static string SeverityWord(Severity severity) => severity switch
+    {
+        Severity.Error => "error",
+        Severity.Warning => "warning",
+        _ => "info",
+    };
+
+    static ConsoleColor SeverityColor(Severity severity) => severity switch
+    {
+        Severity.Error => ConsoleColor.Red,
+        Severity.Warning => ConsoleColor.Yellow,
+        _ => ConsoleColor.Cyan,
+    };
 
     static void WriteEntry(Diagnostic d)
     {
-        // Render the per-finding severity word using the shared suite ladder vocabulary
-        // (error -> high, warning -> low, info -> info), padded so the message column stays aligned.
-        var levelLabel = d.Severity switch
-        {
-            Severity.Error => "high",
-            Severity.Warning => "low ",
-            _ => "info"
-        };
-        var color = d.Severity switch
-        {
-            Severity.Error => ConsoleColor.Red,
-            Severity.Warning => ConsoleColor.Yellow,
-            _ => ConsoleColor.Cyan
-        };
+        // Per-finding severity word uses the canonical vocabulary (error/warning/info), padded so
+        // the message column stays aligned.
+        var levelLabel = SeverityWord(d.Severity).PadRight(SeverityFieldWidth);
 
         Console.Write($"    {d.Line,LineFieldWidth}:{d.Column,-ColumnFieldWidth}  ");
-        Console.ForegroundColor = color;
+        Console.ForegroundColor = SeverityColor(d.Severity);
         Console.Write(levelLabel);
         Console.ResetColor();
         Console.WriteLine($"  {d.Message}  [{d.Rule}]");
@@ -262,13 +349,10 @@ static class Reporter
         return "lint";
     }
 
-    // Stable ordering rank used to group both human and JSON output by category.
+    // Stable ordering rank used to group JSON output by category.
     static int GetCategory(string ruleId)
     {
         var rank = Array.IndexOf(CategoryOrder, Category(ruleId));
         return rank < 0 ? CategoryOrder.Length : rank;
     }
-
-    static string CategoryLabel(int rank) =>
-        rank >= 0 && rank < CategoryOrder.Length ? CategoryOrder[rank] : "lint";
 }

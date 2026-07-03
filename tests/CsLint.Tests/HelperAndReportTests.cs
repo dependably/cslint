@@ -87,23 +87,75 @@ public class ReporterTests
     }
 
     [Fact]
-    public void Human_groups_by_category_and_counts()
+    public void Human_groups_by_severity_and_counts()
     {
         var output = T.CaptureOut(() => Reporter.Write(Sample(), OutputFormat.Human, "/repo"));
-        Assert.Contains("editorconfig", output);
-        Assert.Contains("sast", output);
-        Assert.Contains("opinionated", output);
+        // Sections are keyed by severity now, not category.
+        Assert.Contains("errors", output);
+        Assert.Contains("warnings", output);
         Assert.Contains("1 error", output);
         Assert.Contains("2 warning", output);
+        // The per-rule frequency table lists every rule id that fired.
+        Assert.Contains("Findings by rule:", output);
+        Assert.Contains("EC001", output);
+        Assert.Contains("SAST001", output);
+        Assert.Contains("OP004", output);
     }
 
     [Fact]
-    public void Human_uses_ladder_severity_words()
+    public void Human_uses_canonical_severity_words()
     {
-        // Per-finding severity word follows the shared ladder: error -> high, warning -> low.
+        // Per-finding severity word uses the canonical vocabulary: error / warning (not high/low).
         var output = T.CaptureOut(() => Reporter.Write(Sample(), OutputFormat.Human, "/repo"));
-        Assert.Contains("high", output);
-        Assert.Contains("low", output);
+        Assert.Contains("error", output);
+        Assert.Contains("warning", output);
+        // The old shared-ladder words must not leak into the human per-finding lines.
+        Assert.DoesNotContain("high", output);
+        Assert.DoesNotContain(" low ", output);
+    }
+
+    [Fact]
+    public void Human_orders_errors_before_warnings()
+    {
+        // Regression pin: a lone error must surface before the warnings, not be buried by the old
+        // category-first ordering (editorconfig warnings sorted ahead of the sast error).
+        var output = T.CaptureOut(() => Reporter.Write(Sample(), OutputFormat.Human, "/repo"));
+        var errorIdx = output.IndexOf("[SAST001]", StringComparison.Ordinal);   // the one error
+        var warnIdx = output.IndexOf("[EC001]", StringComparison.Ordinal);      // a warning
+        Assert.True(errorIdx >= 0 && warnIdx >= 0);
+        Assert.True(errorIdx < warnIdx, "the error finding must be printed before the warning finding");
+    }
+
+    [Fact]
+    public void Human_collapses_repeated_rule_and_caps_output()
+    {
+        // 25 findings of one rule across many files: the report must collapse the repeats into a
+        // "+N more <RULE> in M files" note rather than printing all 25.
+        var many = Enumerable.Range(0, 25)
+            .Select(i => new Diagnostic($"/repo/F{i}.cs", 1, 1, "EC001", "indent", Severity.Warning))
+            .ToList();
+        var output = T.CaptureOut(() => Reporter.Write(many, OutputFormat.Human, "/repo"));
+        Assert.Contains("more EC001 in", output);
+        Assert.Contains("Findings by rule:", output);
+
+        // --max-findings caps the printed count; the overflow note names how to see them all.
+        var capped = T.CaptureOut(() => Reporter.Write(many, OutputFormat.Human, "/repo", maxFindings: 3));
+        Assert.Contains("more finding", capped);
+        Assert.Contains("--no-limit", capped);
+    }
+
+    [Fact]
+    public void Human_no_limit_prints_every_finding_uncollapsed()
+    {
+        // --no-limit disables both the cap and the per-rule collapse: all 15 lines are printed and
+        // no collapse note appears.
+        var many = Enumerable.Range(0, 15)
+            .Select(i => new Diagnostic($"/repo/F{i}.cs", 1, 1, "EC001", "indent", Severity.Warning))
+            .ToList();
+        var output = T.CaptureOut(() => Reporter.Write(many, OutputFormat.Human, "/repo", noLimit: true));
+        Assert.DoesNotContain("more EC001 in", output);
+        // Every file's finding line is present.
+        Assert.Equal(15, System.Text.RegularExpressions.Regex.Matches(output, @"\[EC001\]").Count);
     }
 
     [Fact]
