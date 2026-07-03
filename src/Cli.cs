@@ -144,7 +144,8 @@ static class Cli
         var tripped = GateTripped(options.FailOn, errors, warnings, infos, allDiagnostics.Count);
         var exitCode = tripped ? 1 : 0;
 
-        Reporter.Write(allDiagnostics, options.Format, options.Root, totalFiles, exitCode, Version());
+        Reporter.Write(allDiagnostics, options.Format, options.Root, totalFiles, exitCode, Version(),
+            options.MaxFindings, options.NoLimit);
 
         // The human summary line must not land on stdout for machine formats, or it corrupts
         // the JSON document / GitHub-annotation stream. Send it to stderr there instead.
@@ -153,13 +154,23 @@ static class Cli
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode && options.ProjectPath != null ? " + semantic" : "") + ".");
 
-        // Make a shrunk file count self-explanatory: note how many files the default-exclude
-        // pruning skipped (node_modules, bin/obj, .git, .claude, packages), and how to opt out.
-        if (options.SkippedByDefaultExcludes > 0)
+        // Make a shrunk file count self-explanatory: note how many files were skipped by the
+        // default-exclude pruning (node_modules, bin/obj, .git, .claude, packages) and by
+        // .gitignore, and how to opt out.
+        var skippedExcludes = options.SkippedByDefaultExcludes;
+        var skippedIgnored = options.SkippedByGitignore;
+        if (skippedExcludes + skippedIgnored > 0)
+        {
+            var parts = new List<string>();
+            if (skippedExcludes > 0)
+                parts.Add($"{skippedExcludes} in default-excluded paths (node_modules, bin, obj, .git, .claude, packages)");
+            if (skippedIgnored > 0)
+                parts.Add($"{skippedIgnored} matched by .gitignore");
+            var total = skippedExcludes + skippedIgnored;
             summaryWriter.WriteLine(
-                $"Skipped {options.SkippedByDefaultExcludes} file{(options.SkippedByDefaultExcludes != 1 ? "s" : "")} " +
-                "in default-excluded paths (node_modules, bin, obj, .git, .claude, packages). " +
-                "Pass --no-default-excludes to include them.");
+                $"Skipped {total} file{(total != 1 ? "s" : "")}: " + string.Join(", ", parts) +
+                ". Pass --no-default-excludes to include them.");
+        }
 
         // When the gate trips without any errors, the trigger (warnings, or a count threshold) is
         // not otherwise obvious from the report — say so explicitly.
@@ -241,7 +252,8 @@ static class Cli
             // --no-default-excludes). The count of pruned files is surfaced as a one-line note.
             var walk = FileWalker.Walk(opts.Root, applyDefaultExcludes: !opts.NoDefaultExcludes);
             opts.SkippedByDefaultExcludes = walk.SkippedFiles;
-            return (true, Filter(walk.Files.Where(f => !IsGeneratedTarget(f)), opts));
+            var discovered = walk.Files.Where(f => !IsGeneratedTarget(f));
+            return (true, Filter(HonorGitignore(discovered, opts), opts));
         }
 
         if (!GitResolver.IsGitRepo(opts.Root))
@@ -286,6 +298,25 @@ static class Cli
         }
 
         return (true, Filter(expanded.Where(f => !IsGeneratedTarget(f)).Distinct(), opts));
+    }
+
+    // Drop files that git's ignore rules exclude (nested .gitignore, negation, anchoring, **),
+    // on top of the built-in directory excludes — unless --no-default-excludes opts out. Uses
+    // `git check-ignore` when the root is a git repo; a non-repo (or unavailable git) yields no
+    // extra filtering, leaving the built-in excludes as the sole guard. The skipped count feeds
+    // the same "Skipped N files…" note the default excludes use.
+    static IEnumerable<string> HonorGitignore(IEnumerable<string> files, CliOptions opts)
+    {
+        if (opts.NoDefaultExcludes)
+            return files;
+
+        var list = files.ToList();
+        var ignored = GitResolver.GetIgnoredFiles(opts.Root, list);
+        if (ignored.Count == 0)
+            return list;
+
+        opts.SkippedByGitignore += list.Count(ignored.Contains);
+        return list.Where(f => !ignored.Contains(f));
     }
 
     // Drop files matching any --exclude / .dependably-check exclude glob.
@@ -414,6 +445,7 @@ static class Cli
             case "--scan": opts.ScanMode = true; return true;
             case "--deep": opts.DeepMode = true; return true;
             case "--no-default-excludes": opts.NoDefaultExcludes = true; return true;
+            case "--no-limit": opts.NoLimit = true; return true;
             default: return false;
         }
     }
@@ -431,7 +463,17 @@ static class Cli
         ["--config"] = (o, v) => o.ConfigPath = Path.GetFullPath(v),
         ["--exclude"] = (o, v) => o.Exclude.Add(v),
         ["--fail-on"] = ParseFailOn,
+        ["--max-findings"] = ParseMaxFindings,
     };
+
+    // Parse `--max-findings <N>`: a non-negative cap on how many findings the human report prints.
+    static void ParseMaxFindings(CliOptions opts, string value)
+    {
+        if (int.TryParse(value.Trim(), out var n) && n >= 0)
+            opts.MaxFindings = n;
+        else
+            opts.OptionError ??= $"invalid --max-findings '{value}' (expected a non-negative integer)";
+    }
 
     static void SetFormat(CliOptions opts, string value)
     {
@@ -480,7 +522,7 @@ static class Cli
             case "severity":
                 var rank = SeverityRank(val);
                 if (rank is null)
-                    opts.OptionError ??= $"invalid --fail-on severity '{val}' (expected critical|high|moderate|low|info)";
+                    opts.OptionError ??= $"invalid --fail-on severity '{val}' (expected error|warning|suggestion|info; aliases critical|high|moderate|low)";
                 else
                     opts.FailOn.Add(new FailOnRule(FailOnKind.Severity, rank.Value));
                 break;
@@ -496,15 +538,24 @@ static class Cli
         }
     }
 
-    // Map a severity token to its rank on the shared suite ladder (info=0 .. critical=4). Accepts
-    // the canonical ladder words plus the P2a raw words error (=high) and warning (=low).
+    // Map a severity token to its rank on the shared suite ladder (info=0 .. critical=4). The
+    // canonical vocabulary cslint prints and documents is error/warning/suggestion/info; the
+    // shared-suite ladder words (critical/high/moderate/low) and the .editorconfig spelling
+    // (silent/none are suppression, not a gate level) are kept as accepted aliases so existing
+    // pipelines keep working. cslint only ever emits error(=high), warning(=low), and the
+    // suggestion/info tier(=info), so suggestion and info map to the same rank.
     static int? SeverityRank(string token) => token.Trim().ToLowerInvariant() switch
     {
-        "critical" => RankCritical,
-        "high" or "error" => RankHigh,
-        "moderate" => RankModerate,
-        "low" or "warning" => RankLow,
+        // Canonical words.
+        "error" => RankHigh,
+        "warning" => RankLow,
+        "suggestion" => RankInfo,
         "info" => RankInfo,
+        // Shared-suite ladder aliases.
+        "critical" => RankCritical,
+        "high" => RankHigh,
+        "moderate" => RankModerate,
+        "low" => RankLow,
         _ => null,
     };
 
@@ -575,9 +626,11 @@ static class Cli
             FILES
               (default)     Staged .cs files (git diff --cached)
               --global, -g  All .cs files under root. Never follows directory symlinks (so
-                            node_modules cycles can't loop) and prunes node_modules, bin, obj,
-                            .git, .claude, packages by default; prints how many files it skipped.
-              --no-default-excludes  Under --global, walk the default-excluded directories too.
+                            node_modules cycles can't loop), prunes node_modules, bin, obj,
+                            .git, .claude, packages, and honors .gitignore (via git check-ignore:
+                            nested files + negation) when in a git repo; prints how many it skipped.
+              --no-default-excludes  Under --global, walk the default-excluded directories and
+                            .gitignore'd paths too.
               --unstaged    Include unstaged changes
               --exclude <g> Skip paths matching glob (repeatable; substring if no wildcard).
                             Also read from .dependably-check (common.exclude / cslint.exclude).
@@ -590,12 +643,16 @@ static class Cli
               --format, -f  human (default) | json | github
               --fix         Auto-fix EditorConfig violations where possible
               --explain <f> Show which rules apply to a file and why
+              --max-findings <N>  Cap how many findings the human report prints (default 200);
+                                  the rest collapse into a per-rule "…and N more" note.
+              --no-limit    Print every finding (no cap, no per-rule collapse).
 
             CI GATE
               --fail-on <k>=<v>  Exit 1 when the gate trips (repeatable). Keys:
-                severity=<critical|high|moderate|low|info>  Trip if any finding is at-or-above the
-                                                            level (cslint: error=high, warning=low).
-                count=<N>                                   Trip when total findings exceed N.
+                severity=<error|warning|suggestion|info>  Trip if any finding is at-or-above the
+                                                          level. Aliases: error=high, warning=low,
+                                                          suggestion=info; critical/moderate accepted.
+                count=<N>                                 Trip when total findings exceed N.
               Default (no --fail-on): errors gate (exit 1), warnings don't.
               `--fail-on severity=warning` gates on warnings too (the former --strict).
 
@@ -674,6 +731,17 @@ sealed class CliOptions
     // Files skipped because they lived under a default-excluded directory during a --global walk.
     // Surfaced as a one-line note so a shrunk file count is never silently confusing.
     public int SkippedByDefaultExcludes { get; set; }
+
+    // Files skipped during a --global walk because git's ignore rules exclude them. Surfaced in
+    // the same "Skipped N files…" note.
+    public int SkippedByGitignore { get; set; }
+
+    // --max-findings <N>: cap how many findings the human report prints before collapsing the
+    // remainder into a "…and M more" note. Null means the built-in default cap applies.
+    public int? MaxFindings { get; set; }
+
+    // --no-limit: print every finding (no output cap, no per-rule collapse).
+    public bool NoLimit { get; set; }
 }
 
 // The kind of CI gate a --fail-on rule expresses.

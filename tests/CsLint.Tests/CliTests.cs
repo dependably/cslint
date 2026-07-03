@@ -105,6 +105,57 @@ public class CliTests
     }
 
     [Fact]
+    public void ParseOptions_fail_on_accepts_canonical_and_alias_severities()
+    {
+        // Canonical vocabulary: error/warning/suggestion/info map onto the shared ladder ranks.
+        // `suggestion` is the new canonical word for the info tier and must be accepted (it was a
+        // usage error before this change).
+        Assert.Null(Cli.ParseOptions(["--fail-on", "severity=suggestion"]).OptionError);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=suggestion"]).FailOn,
+            r => r.Kind == FailOnKind.Severity && r.Threshold == 0); // suggestion == info == rank 0
+
+        Assert.Null(Cli.ParseOptions(["--fail-on", "severity=error"]).OptionError);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=error"]).FailOn,
+            r => r.Kind == FailOnKind.Severity && r.Threshold == 3); // error == high
+
+        // Old shared-ladder aliases still work (backward compatibility).
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=high"]).FailOn,
+            r => r.Threshold == 3);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=low"]).FailOn,
+            r => r.Threshold == 1);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=critical"]).FailOn,
+            r => r.Threshold == 4);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=moderate"]).FailOn,
+            r => r.Threshold == 2);
+        Assert.Contains(Cli.ParseOptions(["--fail-on", "severity=info"]).FailOn,
+            r => r.Threshold == 0);
+    }
+
+    [Fact]
+    public void ParseOptions_max_findings_and_no_limit()
+    {
+        var m = Cli.ParseOptions(["--max-findings", "50"]);
+        Assert.Null(m.OptionError);
+        Assert.Equal(50, m.MaxFindings);
+
+        var nl = Cli.ParseOptions(["--no-limit"]);
+        Assert.True(nl.NoLimit);
+        // Default: no cap override, not no-limit.
+        var def = Cli.ParseOptions([]);
+        Assert.Null(def.MaxFindings);
+        Assert.False(def.NoLimit);
+    }
+
+    [Fact]
+    public void ParseOptions_bad_max_findings_is_a_usage_error()
+    {
+        Assert.NotNull(Cli.ParseOptions(["--max-findings", "-1"]).OptionError);
+        Assert.NotNull(Cli.ParseOptions(["--max-findings", "abc"]).OptionError);
+        // Trailing --max-findings without a value is also a usage error.
+        Assert.NotNull(Cli.ParseOptions(["--max-findings"]).OptionError);
+    }
+
+    [Fact]
     public void ParseOptions_fail_on_bad_value_is_a_usage_error()
     {
         Assert.NotNull(Cli.ParseOptions(["--fail-on", "severity=bogus"]).OptionError);
@@ -416,6 +467,86 @@ public class CliTests
             Assert.Contains(list, p => p.EndsWith("A.cs"));
             Assert.Contains(list, p => p.EndsWith("B.cs"));
             Assert.Equal(0, o.SkippedByDefaultExcludes);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    // Regression pin (#27): --global honors .gitignore (nested files + negation) via
+    // `git check-ignore`, on top of the built-in excludes. On the old code the ignored file was
+    // linted, since only the fixed node_modules/bin/obj/… set was pruned.
+    [Fact]
+    public void ResolveTargets_global_honors_gitignore()
+    {
+        var dir = Git.InitRepo();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, ".gitignore"),
+                "gen/\n*.tmp.cs\n!keep.tmp.cs\n");
+            File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+            Directory.CreateDirectory(Path.Combine(dir, "gen"));
+            File.WriteAllText(Path.Combine(dir, "gen", "G.cs"), "class G { }");   // ignored dir
+            File.WriteAllText(Path.Combine(dir, "B.tmp.cs"), "class B { }");      // ignored pattern
+            File.WriteAllText(Path.Combine(dir, "keep.tmp.cs"), "class K { }");   // negated back in
+
+            // Nested .gitignore in a subdirectory must also be honored.
+            Directory.CreateDirectory(Path.Combine(dir, "sub"));
+            File.WriteAllText(Path.Combine(dir, "sub", ".gitignore"), "*.nested.cs\n");
+            File.WriteAllText(Path.Combine(dir, "sub", "N.nested.cs"), "class N { }"); // ignored
+            File.WriteAllText(Path.Combine(dir, "sub", "S.cs"), "class S { }");         // kept
+
+            var o = Cli.ParseOptions(["--global", "--root", dir]);
+            var (resolved, targets) = Cli.ResolveTargets(o);
+            Assert.True(resolved);
+            var list = targets.ToList();
+
+            Assert.Contains(list, p => p.EndsWith("A.cs"));
+            Assert.Contains(list, p => p.EndsWith("keep.tmp.cs"));   // negation re-includes it
+            Assert.Contains(list, p => p.EndsWith("S.cs"));
+            Assert.DoesNotContain(list, p => p.EndsWith("G.cs"));    // gen/ dir ignored
+            Assert.DoesNotContain(list, p => p.EndsWith("B.tmp.cs")); // *.tmp.cs ignored
+            Assert.DoesNotContain(list, p => p.EndsWith("N.nested.cs")); // nested .gitignore
+            Assert.True(o.SkippedByGitignore >= 3);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ResolveTargets_global_no_default_excludes_includes_gitignored()
+    {
+        // The --no-default-excludes escape hatch must also disable .gitignore honoring, so a
+        // deliberately-ignored file is linted when asked for.
+        var dir = Git.InitRepo();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, ".gitignore"), "*.tmp.cs\n");
+            File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+            File.WriteAllText(Path.Combine(dir, "B.tmp.cs"), "class B { }");
+
+            var o = Cli.ParseOptions(["--global", "--no-default-excludes", "--root", dir]);
+            var (_, targets) = Cli.ResolveTargets(o);
+            var list = targets.ToList();
+            Assert.Contains(list, p => p.EndsWith("A.cs"));
+            Assert.Contains(list, p => p.EndsWith("B.tmp.cs"));
+            Assert.Equal(0, o.SkippedByGitignore);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ResolveTargets_global_gitignore_noop_outside_git_repo()
+    {
+        // Outside a git repo there is no gitignore data: the built-in excludes are the sole guard
+        // and no files are skipped as gitignored.
+        var dir = T.TempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, ".gitignore"), "A.cs\n"); // no git → not honored
+            File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+            var o = Cli.ParseOptions(["--global", "--root", dir]);
+            var (resolved, targets) = Cli.ResolveTargets(o);
+            Assert.True(resolved);
+            Assert.Contains(targets, p => p.EndsWith("A.cs"));
+            Assert.Equal(0, o.SkippedByGitignore);
         }
         finally { Directory.Delete(dir, true); }
     }

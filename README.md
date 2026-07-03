@@ -31,7 +31,7 @@ cslint --explain src/MyService.cs          # show which rules apply to a file an
 
 `--fail-on <key>=<value>` is the CI gate (repeatable). The process exits `1` if any rule trips:
 
-- `severity=<critical|high|moderate|low|info>` — trips when a finding is at or above the level. cslint emits `high` (its errors) and `low` (its warnings), so `severity=high` gates on errors and `severity=warning` gates on warnings too.
+- `severity=<error|warning|suggestion|info>` — trips when a finding is at or above the level. This is the canonical severity vocabulary cslint prints on every finding and in the summary. The old shared-suite ladder words are still accepted as aliases: `error`=`high`, `warning`=`low`, `suggestion`=`info`, plus `critical` and `moderate`. So `severity=error` (a.k.a. `high`) gates on errors and `severity=warning` (a.k.a. `low`) gates on warnings too.
 - `count=<N>` — trips when the total number of findings exceeds `N`.
 
 ```bash
@@ -44,8 +44,8 @@ A bad value exits `2`.
 
 ### Output (`--format`)
 
-- `human` (default) — readable, category-grouped console report.
-- `json` — one JSON object on stdout (status to stderr); stable, machine-parseable.
+- `human` (default) — readable console report grouped by severity, **errors first**, so a handful of high-severity findings are never buried under a flood of warnings. Repeats of a noisy rule collapse into a `+N more <RULE> in M files` note, and the report ends with a per-rule frequency table. By default it prints up to 200 findings; `--max-findings <N>` changes the cap and `--no-limit` prints everything (no cap, no collapse).
+- `json` — one JSON object on stdout (status to stderr); stable, machine-parseable. The JSON envelope keeps the shared-suite severity ladder (`high`/`low`/`info`) so it stays consistent across the Dependably suite.
 - `github` — GitHub Actions `::error`/`::warning` annotations that appear as inline PR comments.
 
 ### Pre-commit hook
@@ -117,7 +117,7 @@ Exclude paths with `--exclude <glob>` (repeatable). A pattern with no wildcard i
 
 ### `--global` file discovery
 
-Under `--global`, cslint walks the tree without following directory symlinks/junctions (so `node_modules` symlink cycles can't loop), and prunes a built-in set of directories — `node_modules`, `bin`, `obj`, `.git`, `.claude`, `packages` — so vendored dependencies, build output, and throwaway worktrees don't drown first-party code. It prints how many files it skipped. Pass `--no-default-excludes` to walk those directories too.
+Under `--global`, cslint walks the tree without following directory symlinks/junctions (so `node_modules` symlink cycles can't loop), and prunes a built-in set of directories — `node_modules`, `bin`, `obj`, `.git`, `.claude`, `packages` — so vendored dependencies, build output, and throwaway worktrees don't drown first-party code. On top of that, when the root is a git repository it honors `.gitignore` (including nested ignore files and negation) by delegating to `git check-ignore`, so generated code and vendored paths your project already ignores are skipped too. Outside a git repo the built-in excludes are the sole guard. It prints how many files it skipped. Pass `--no-default-excludes` to walk the built-in-excluded and `.gitignore`'d directories too.
 
 Test files (name ending `Test`/`Tests`/`Spec`, or under a `Tests`/`Specs` directory) default `OP004` (magic numbers) and `OP006` (missing `CancellationToken`) to off — literal expected values are idiomatic in assertions, and framework-invoked `[Fact]`/`[Theory]`/`[Test]`/`[TestMethod]` methods can't take a token. Any of these test-attributed methods is skipped by `OP006` even outside a test file. Re-enable per glob with an explicit `dotnet_diagnostic.OP004.severity` / `OP006.severity` in `.editorconfig`.
 
