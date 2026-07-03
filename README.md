@@ -7,17 +7,15 @@ A fast, build-free C# linter with four tiers:
 3. **Semantic analysis** (`--deep`) — loads your project through Roslyn's `MSBuildWorkspace` for higher-accuracy checks and `dotnet_diagnostic.*` severity overrides.
 4. **Opinionated scan** (`--scan`) — categorical pattern checks: magic numbers, boolean flag parameters, missing `CancellationToken`.
 
-Requires the .NET 10 SDK. Multi-targets `net8.0` and `net10.0`.
-
 ## Install
 
-```bash
-# From source
-dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint
+Requires the .NET SDK 8.0 or later.
 
-# From nuget.org (once published)
+```bash
 dotnet tool install --global Dependably.CsLint
 ```
+
+This puts the `cslint` command on your PATH.
 
 ## Usage
 
@@ -116,17 +114,6 @@ dotnet_diagnostic.OP004.severity   = error   # promote magic numbers to errors
 Levels are `none`/`silent` (drop the finding), `suggestion`, `warning`, and `error`, and apply to every rule.
 
 Exclude paths with `--exclude <glob>` (repeatable). A pattern with no wildcard is a substring match; otherwise `**`/`*`/`?` glob against the path.
-
-## Tests
-
-```bash
-# Unit tests (no global install needed)
-dotnet test tests/CsLint.Tests/CsLint.Tests.csproj
-
-# Integration fixtures (requires the packed tool installed globally)
-dotnet pack && dotnet tool install --global --add-source ./nupkg Dependably.CsLint
-bash tests/RunTests.sh
-```
 
 ## License
 
