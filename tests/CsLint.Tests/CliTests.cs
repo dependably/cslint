@@ -379,6 +379,54 @@ public class CliTests
         finally { Directory.Delete(dir, true); }
     }
 
+    // Regression pin (#26): --global prunes vendored/build dirs by default and records the skip
+    // count. On the old EnumerateFiles(AllDirectories) walk node_modules would be linted.
+    [Fact]
+    public void ResolveTargets_global_prunes_default_excludes_and_records_skip_count()
+    {
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+        Directory.CreateDirectory(Path.Combine(dir, "node_modules"));
+        File.WriteAllText(Path.Combine(dir, "node_modules", "B.cs"), "class B { }");
+        try
+        {
+            var o = Cli.ParseOptions(["--global", "--root", dir]);
+            var (resolved, targets) = Cli.ResolveTargets(o);
+            Assert.True(resolved);
+            var list = targets.ToList();
+            Assert.Contains(list, p => p.EndsWith("A.cs"));
+            Assert.DoesNotContain(list, p => p.EndsWith("B.cs"));
+            Assert.Equal(1, o.SkippedByDefaultExcludes);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ResolveTargets_global_no_default_excludes_includes_vendored()
+    {
+        var dir = T.TempDir();
+        File.WriteAllText(Path.Combine(dir, "A.cs"), "class A { }");
+        Directory.CreateDirectory(Path.Combine(dir, "node_modules"));
+        File.WriteAllText(Path.Combine(dir, "node_modules", "B.cs"), "class B { }");
+        try
+        {
+            var o = Cli.ParseOptions(["--global", "--no-default-excludes", "--root", dir]);
+            var (_, targets) = Cli.ResolveTargets(o);
+            var list = targets.ToList();
+            Assert.Contains(list, p => p.EndsWith("A.cs"));
+            Assert.Contains(list, p => p.EndsWith("B.cs"));
+            Assert.Equal(0, o.SkippedByDefaultExcludes);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ParseOptions_recognizes_no_default_excludes()
+    {
+        Assert.True(Cli.ParseOptions(["--no-default-excludes"]).NoDefaultExcludes);
+        Assert.False(Cli.ParseOptions(["--global"]).NoDefaultExcludes);
+    }
+
     [Fact]
     public void IsGenerated_detects_generated_suffixes()
     {

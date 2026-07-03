@@ -115,6 +115,12 @@ Levels are `none`/`silent` (drop the finding), `suggestion`, `warning`, and `err
 
 Exclude paths with `--exclude <glob>` (repeatable). A pattern with no wildcard is a substring match; otherwise `**`/`*`/`?` glob against the path.
 
+### `--global` file discovery
+
+Under `--global`, cslint walks the tree without following directory symlinks/junctions (so `node_modules` symlink cycles can't loop), and prunes a built-in set of directories — `node_modules`, `bin`, `obj`, `.git`, `.claude`, `packages` — so vendored dependencies, build output, and throwaway worktrees don't drown first-party code. It prints how many files it skipped. Pass `--no-default-excludes` to walk those directories too.
+
+Test files (name ending `Test`/`Tests`/`Spec`, or under a `Tests`/`Specs` directory) default `OP004` (magic numbers) and `OP006` (missing `CancellationToken`) to off — literal expected values are idiomatic in assertions, and framework-invoked `[Fact]`/`[Theory]`/`[Test]`/`[TestMethod]` methods can't take a token. Any of these test-attributed methods is skipped by `OP006` even outside a test file. Re-enable per glob with an explicit `dotnet_diagnostic.OP004.severity` / `OP006.severity` in `.editorconfig`.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

@@ -1,3 +1,4 @@
+using CsLint.Rules;
 using CsLint.Rules.Opinionated;
 using Xunit;
 
@@ -335,6 +336,76 @@ public class OpinionatedRuleTests
     public void Opinionated_category_is_set()
     {
         Assert.Equal(CsLint.Rules.RuleCategory.Opinionated, new MagicNumberRule(On).Category);
+    }
+
+    // --- Test-code suppression for OP004/OP006 (moonlitlabs/cslint#26) ---------------------------
+
+    // Runs a rule against source written to a file with the given name, so path-based test-file
+    // detection (TestFileHeuristic) is exercised. Optionally seeds an .editorconfig override.
+    static async Task<IReadOnlyList<Diagnostic>> RunNamed(
+        IRule rule, string fileName, string code, FileConfig? config = null)
+    {
+        var dir = T.TempDir();
+        var path = Path.Combine(dir, fileName);
+        File.WriteAllText(path, code);
+        try { return await rule.AnalyzeAsync(T.Unit(path, config)); }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    // Regression pin (#26): a framework-invoked [Fact] method is called with no arguments and so
+    // cannot declare a CancellationToken — OP006 must not flag it. FAILS on the old rule.
+    [Theory]
+    [InlineData("Fact")]
+    [InlineData("Theory")]
+    [InlineData("Test")]
+    [InlineData("TestMethod")]
+    public async Task OP006_ignores_test_attributed_method(string attribute)
+    {
+        var code = "using System.Threading.Tasks; class C { " +
+                   $"[{attribute}] public async Task M() {{ await Task.Yield(); }} }}";
+        // A non-test file name isolates the attribute suppression from the path heuristic.
+        var diags = await RunNamed(new MissingCancellationTokenRule(On), "Widget.cs", code);
+        Assert.False(diags.Has("OP006"));
+    }
+
+    // Control: a plain public async method in a non-test file is still flagged.
+    [Fact]
+    public async Task OP006_still_flags_untagged_async_method_in_production_file()
+    {
+        var code = "using System.Threading.Tasks; class C { public async Task M() { await Task.Yield(); } }";
+        var diags = await RunNamed(new MissingCancellationTokenRule(On), "Widget.cs", code);
+        Assert.True(diags.Has("OP006"));
+    }
+
+    // Regression pin (#26): OP006 defaults off in a test file (path heuristic) even without a
+    // test attribute — reusing SAST002's TestFileHeuristic. FAILS on the old rule.
+    [Fact]
+    public async Task OP006_suppressed_in_test_file_by_path()
+    {
+        var code = "using System.Threading.Tasks; class C { public async Task M() { await Task.Yield(); } }";
+        var diags = await RunNamed(new MissingCancellationTokenRule(On), "WidgetTests.cs", code);
+        Assert.False(diags.Has("OP006"));
+    }
+
+    // Regression pin (#26): OP004 defaults off in test files (literal expected values are idiomatic).
+    [Fact]
+    public async Task OP004_suppressed_in_test_file_by_path()
+    {
+        var diags = await RunNamed(new MagicNumberRule(On), "WidgetTests.cs",
+            "class C { int M() { return 42; } }");
+        Assert.False(diags.Has("OP004"));
+    }
+
+    // The test-file default is overridable: an explicit .editorconfig severity re-enables the rule.
+    [Theory]
+    [InlineData("OP004", "class C { int M() { return 42; } }")]
+    [InlineData("OP006", "using System.Threading.Tasks; class C { public async Task M() { await Task.Yield(); } }")]
+    public async Task Opinionated_test_file_suppression_overridable_via_editorconfig(string ruleId, string code)
+    {
+        IRule rule = ruleId == "OP004" ? new MagicNumberRule(On) : new MissingCancellationTokenRule(On);
+        var cfg = T.Cfg(($"dotnet_diagnostic.{ruleId}.severity", "warning"));
+        var diags = await RunNamed(rule, "WidgetTests.cs", code, cfg);
+        Assert.True(diags.Has(ruleId));
     }
 
     // The removed --no-magic-numbers / --no-bool-flags / --no-cancellation flags lose nothing:

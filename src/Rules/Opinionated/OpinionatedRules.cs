@@ -1,8 +1,46 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using CsLint.Rules.Sast;
 
 namespace CsLint.Rules.Opinionated;
+
+// Test-code policy shared by the opinionated scan rules. Idiomatic test code dominates two of
+// the highest-volume rules: OP004 (literal expected values in assertions/fixtures) and OP006
+// (a [Fact]/[Theory] method is invoked parameterlessly by the framework and so cannot take a
+// CancellationToken). Both therefore default to OFF in test files — reusing SAST002's test-file
+// detection (TestFileHeuristic) — unless a .editorconfig dotnet_diagnostic.OP00x.severity
+// override explicitly re-enables the rule for that glob. OP006 additionally skips any
+// test-attributed method even in a file the heuristic doesn't classify as a test file.
+static class OpinionatedTestPolicy
+{
+    public static bool SuppressedInTestFile(SourceUnit unit, string ruleId) =>
+        TestFileHeuristic.IsTestFile(unit.Path) && !ExplicitlyEnabled(unit.Config, ruleId);
+
+    // True only when the user set an explicit, non-silencing severity for this rule in
+    // .editorconfig, which re-enables the rule in test files it would otherwise skip.
+    static bool ExplicitlyEnabled(FileConfig config, string ruleId) =>
+        config.Properties.TryGetValue($"dotnet_diagnostic.{ruleId}.severity", out var sev)
+        && sev.Trim().ToLowerInvariant() is not ("none" or "silent");
+
+    // xUnit ([Fact]/[Theory]), NUnit ([Test]/[TestCase]), MSTest ([TestMethod]/[DataTestMethod]).
+    static readonly HashSet<string> TestMethodAttributes = new(StringComparer.Ordinal)
+    { "Fact", "Theory", "Test", "TestCase", "TestMethod", "DataTestMethod" };
+
+    public static bool IsTestMethod(MethodDeclarationSyntax method) =>
+        method.AttributeLists
+            .SelectMany(list => list.Attributes)
+            .Any(a => TestMethodAttributes.Contains(SimpleAttributeName(a.Name.ToString())));
+
+    // Reduce "Xunit.FactAttribute" / "FactAttribute" / "Fact" to the bare "Fact".
+    static string SimpleAttributeName(string name)
+    {
+        var dot = name.LastIndexOf('.');
+        var simple = dot >= 0 ? name[(dot + 1)..] : name;
+        return simple.EndsWith("Attribute", StringComparison.Ordinal)
+            ? simple[..^"Attribute".Length] : simple;
+    }
+}
 
 // cslint's opinionated tier covers categorical, pass/fail *pattern* smells only
 // (magic numbers, flag arguments, missing CancellationToken). Quantitative *metric*
@@ -40,6 +78,10 @@ sealed class MagicNumberRule : IRule
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
         var filePath = unit.Path;
+        // Literal expected values in assertions/fixtures are idiomatic, not "magic numbers", so
+        // OP004 defaults off in test files (overridable via .editorconfig).
+        if (OpinionatedTestPolicy.SuppressedInTestFile(unit, Id)) return [];
+
         var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
@@ -326,6 +368,10 @@ sealed class MissingCancellationTokenRule : IRule
     public async Task<IReadOnlyList<Diagnostic>> AnalyzeAsync(SourceUnit unit)
     {
         var filePath = unit.Path;
+        // Framework-invoked test methods take no arguments, so OP006 defaults off in test files
+        // (overridable via .editorconfig); test-attributed methods are also skipped below.
+        if (OpinionatedTestPolicy.SuppressedInTestFile(unit, Id)) return [];
+
         var root = await unit.Tree.GetRootAsync();
         var diagnostics = new List<Diagnostic>();
 
@@ -333,6 +379,10 @@ sealed class MissingCancellationTokenRule : IRule
         {
             if (!method.Modifiers.Any(SyntaxKind.AsyncKeyword)) continue;
             if (!IsPublicOrInternal(method)) continue;
+            // A [Fact]/[Theory]/[Test]/[TestMethod] method is invoked by the test runner with no
+            // arguments — it cannot declare a CancellationToken parameter — so never flag it,
+            // even in a file the test-file heuristic doesn't catch.
+            if (OpinionatedTestPolicy.IsTestMethod(method)) continue;
             if (SignatureIsFrameworkConstrained(method) || HasAmbientCancellation(method)) continue;
 
             var returnType = method.ReturnType.ToString();
