@@ -1,4 +1,5 @@
 using System.Reflection;
+using CsLint.Config;
 using CsLint.Rules.Opinionated;
 
 namespace CsLint;
@@ -84,7 +85,15 @@ static class Cli
         var summary = await engine.LintFilesAsync(targets, mode, options.Fix);
         var allDiagnostics = await CollectDiagnosticsAsync(engine, options, summary);
 
-        return ReportAndExit(allDiagnostics, options, summary, mode);
+        // Apply the .dependably `exceptions` layer on top of the .editorconfig suppression that
+        // LintEngine already did: matched findings are dropped so they neither print nor gate.
+        var applied = ExceptionApplier.Apply(allDiagnostics, config.Exceptions, options.Root);
+        foreach (var notice in applied.Notices)
+        {
+            Console.Error.WriteLine(notice);
+        }
+
+        return ReportAndExit(applied.Kept, options, summary, mode);
     }
 
     // --deep needs MSBuild registered before any MSBuild type loads; if that fails, warn and
