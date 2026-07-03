@@ -90,7 +90,7 @@ jobs:
   # the gating jobs pass. Keyless OIDC/sigstore attestation covers the exact packed bytes:
   #   gh attestation verify <file>.nupkg -R dependably/cslint
   release:
-    needs: [secret-scan, build-test]
+    needs: [secret-scan, format, build-test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
