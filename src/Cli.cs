@@ -153,6 +153,14 @@ static class Cli
                           $"Mode: {ModeLabel(mode)}" +
                           (options.DeepMode && options.ProjectPath != null ? " + semantic" : "") + ".");
 
+        // Make a shrunk file count self-explanatory: note how many files the default-exclude
+        // pruning skipped (node_modules, bin/obj, .git, .claude, packages), and how to opt out.
+        if (options.SkippedByDefaultExcludes > 0)
+            summaryWriter.WriteLine(
+                $"Skipped {options.SkippedByDefaultExcludes} file{(options.SkippedByDefaultExcludes != 1 ? "s" : "")} " +
+                "in default-excluded paths (node_modules, bin, obj, .git, .claude, packages). " +
+                "Pass --no-default-excludes to include them.");
+
         // When the gate trips without any errors, the trigger (warnings, or a count threshold) is
         // not otherwise obvious from the report — say so explicitly.
         if (tripped && errors == 0)
@@ -228,10 +236,12 @@ static class Cli
                 return (false, []);
             }
 
-            return (true, Filter(
-                Directory.EnumerateFiles(opts.Root, "*.cs", SearchOption.AllDirectories)
-                    .Where(f => !IsGeneratedTarget(f)),
-                opts));
+            // Cycle-safe walk that never follows directory symlinks (breaking node_modules
+            // cycles) and prunes vendored/build/VCS directories by default (unless
+            // --no-default-excludes). The count of pruned files is surfaced as a one-line note.
+            var walk = FileWalker.Walk(opts.Root, applyDefaultExcludes: !opts.NoDefaultExcludes);
+            opts.SkippedByDefaultExcludes = walk.SkippedFiles;
+            return (true, Filter(walk.Files.Where(f => !IsGeneratedTarget(f)), opts));
         }
 
         if (!GitResolver.IsGitRepo(opts.Root))
@@ -403,6 +413,7 @@ static class Cli
             case "--sast": opts.SastMode = true; return true;
             case "--scan": opts.ScanMode = true; return true;
             case "--deep": opts.DeepMode = true; return true;
+            case "--no-default-excludes": opts.NoDefaultExcludes = true; return true;
             default: return false;
         }
     }
@@ -563,7 +574,10 @@ static class Cli
 
             FILES
               (default)     Staged .cs files (git diff --cached)
-              --global, -g  All .cs files under root (skips bin/obj)
+              --global, -g  All .cs files under root. Never follows directory symlinks (so
+                            node_modules cycles can't loop) and prunes node_modules, bin, obj,
+                            .git, .claude, packages by default; prints how many files it skipped.
+              --no-default-excludes  Under --global, walk the default-excluded directories too.
               --unstaged    Include unstaged changes
               --exclude <g> Skip paths matching glob (repeatable; substring if no wildcard).
                             Also read from .dependably-check (common.exclude / cslint.exclude).
@@ -652,6 +666,14 @@ sealed class CliOptions
     public bool FlagMagicNumbers { get; set; } = true;
     public bool FlagBoolFlags { get; set; } = true;
     public bool FlagCancellationToken { get; set; } = true;
+
+    // --no-default-excludes: walk vendored/build/VCS directories under --global too, instead of
+    // pruning the built-in FileWalker.DefaultExcludedDirectories set.
+    public bool NoDefaultExcludes { get; set; }
+
+    // Files skipped because they lived under a default-excluded directory during a --global walk.
+    // Surfaced as a one-line note so a shrunk file count is never silently confusing.
+    public int SkippedByDefaultExcludes { get; set; }
 }
 
 // The kind of CI gate a --fail-on rule expresses.
