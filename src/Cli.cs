@@ -42,7 +42,7 @@ static class Cli
 
         EnsureMsBuildOrFallback(options);
 
-        // Shared .dependably-check config (repo root). CLI flags win: the scan toggles and the
+        // Shared .dependably config (repo root). CLI flags win: the scan toggles and the
         // gate live in the file, and a CLI --fail-on overrides the file's gate entirely.
         CsLintConfig config;
         try
@@ -53,6 +53,13 @@ static class Cli
         {
             Console.Error.WriteLine($"Config error: {ex.Message}");
             return ExitUsageError;
+        }
+
+        // Emit deprecation / unknown-key warnings from the config loader (spec §2.7, §11).
+        // These go to stderr and never affect the exit code.
+        foreach (var w in config.Warnings)
+        {
+            Console.Error.WriteLine($"warning: {w.Message}");
         }
 
         ApplyConfig(options, config);
@@ -92,10 +99,10 @@ static class Cli
         }
     }
 
-    // Fold the .dependably-check config into the options. The opinionated scan rules are toggled
-    // by the file's `scan` section (and by .editorconfig severity overrides). The CI gate comes
-    // from CLI --fail-on, which wins outright; otherwise the default (errors gate) plus the
-    // file's `strict` (warnings gate too) applies.
+    // Fold the .dependably config into the options. The opinionated scan rules are toggled
+    // by the file's `rules` / legacy `scan` section (and by .editorconfig severity overrides).
+    // The CI gate comes from CLI --fail-on, which wins outright; otherwise the default (errors
+    // gate) plus the file's `failOn.severity` / legacy `strict` (warnings gate too) applies.
     static void ApplyConfig(CliOptions options, CsLintConfig config)
     {
         options.FlagMagicNumbers = options.FlagMagicNumbers && config.ScanMagicNumbers;
@@ -319,7 +326,7 @@ static class Cli
         return list.Where(f => !ignored.Contains(f));
     }
 
-    // Drop files matching any --exclude / .dependably-check exclude glob.
+    // Drop files matching any --exclude / .dependably exclude glob.
     public static IEnumerable<string> Filter(IEnumerable<string> files, CliOptions opts) =>
         opts.Exclude.Count == 0
             ? files
@@ -633,7 +640,7 @@ static class Cli
                             .gitignore'd paths too.
               --unstaged    Include unstaged changes
               --exclude <g> Skip paths matching glob (repeatable; substring if no wildcard).
-                            Also read from .dependably-check (common.exclude / cslint.exclude).
+                            Also read from .dependably (common.exclude / cslint.exclude).
 
             DEEP MODE
               --project, -p Path to .csproj or .sln (implies --deep)
@@ -663,13 +670,17 @@ static class Cli
                 dotnet_diagnostic.OP004.severity   = error     # or promote it
               Levels: none/silent (drop) | suggestion | warning | error.
               The opinionated scan rules (OP004/005/006) can also be toggled off in
-              .dependably-check (cslint.scan.{magicNumbers,boolFlags,cancellation}).
+              .dependably via `rules: { "OP004": "off" }` or the legacy
+              cslint.scan.{magicNumbers,boolFlags,cancellation} (deprecated).
 
             CONFIG
-              --config <f>  Path to a .dependably-check JSON file. When omitted, it is discovered
-                            by walking up from --root to the repo boundary. The `cslint` (and
-                            shared `common`) section can set `strict` (warnings gate too) and the
-                            `scan` toggles; a CLI --fail-on overrides the file's gate.
+              --config <f>  Path to a .dependably (or deprecated .dependably-check) JSON file.
+                            When omitted, it is discovered by walking up from --root to the repo
+                            boundary (.dependably preferred). The `cslint` (and shared `common`)
+                            section supports `rules` (per-rule severity), `exceptions` (targeted
+                            suppression), `exclude` (path globs), and `failOn` (CI gate). The
+                            legacy `strict` and `scan` keys still work but emit a deprecation
+                            warning. A CLI --fail-on overrides the file's gate.
 
             OTHER
               --install-hook  Install pre-commit hook (runs --sast --fail-on severity=warning)

@@ -32,4 +32,9 @@
     <ProjectReference Include="../../cslint.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Shared cross-language conformance fixtures (vendored from the spec repo). -->
+    <None Include="conformance\**\*.json" CopyToOutputDirectory="PreserveNewest" LinkBase="conformance" />
+  </ItemGroup>
+
 </Project>

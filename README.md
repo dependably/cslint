@@ -103,6 +103,44 @@ jobs:
 
 ## Configuration
 
+### `.dependably` (shared suite config)
+
+cslint participates in the Dependably suite's shared config file, `.dependably`, committed at the repo root. It reads the `common` section and its own `cslint` section. Supported keys:
+
+```json
+{
+  "version": 1,
+  "common": {
+    "exclude": ["tests/fixtures/**"]
+  },
+  "cslint": {
+    "rules": {
+      "OP004": "off",
+      "SAST002": "warn"
+    },
+    "exceptions": [
+      {
+        "rule": "OP004",
+        "path": "src/Generated/**",
+        "reason": "generated code, tracked in #42",
+        "expires": "2027-01-01"
+      }
+    ],
+    "exclude": ["**/Generated/**"],
+    "failOn": { "severity": "warning" }
+  }
+}
+```
+
+- **`rules`** — per-rule severity (`"error"`, `"warn"`, `"off"`), merged with `common.rules` (tool section wins per rule-id). Disabling OP004/005/006 here is the canonical replacement for the deprecated `scan` toggles.
+- **`exceptions`** — suppress specific findings without disabling a rule globally. Each entry needs `rule`, at least one selector (`path`, `symbol`, or `id`), and a `reason`. Suppressed findings are still counted in the report; set `expires` to flag stale suppressions.
+- **`exclude`** — path globs; union of `common.exclude` and `cslint.exclude`.
+- **`failOn`** — file-level CI gate (`severity` and/or `count`); a CLI `--fail-on` overrides it.
+
+The deprecated `.dependably-check` filename is still read (with a stderr warning). The legacy `strict` and `scan` keys still work but emit deprecation warnings; prefer `failOn.severity` and `rules` respectively.
+
+### `.editorconfig` per-file severity
+
 Any rule's severity is set per file or glob from `.editorconfig` — the same mechanism cslint enforces:
 
 ```ini
