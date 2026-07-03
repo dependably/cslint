@@ -1,5 +1,0 @@
-{
-  "cslint": {
-    "exclude": ["tests/**"]
-  }
-}

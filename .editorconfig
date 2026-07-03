@@ -29,10 +29,19 @@ dotnet_diagnostic.OP005.severity = none
 [src/SemanticEngine.cs]
 dotnet_diagnostic.OP005.severity = none
 
-# SAST002 (console output left in production): Program.cs and Reporting.cs ARE the CLI
-# entry point and the output/reporting layer — writing to the console is their purpose.
+# SAST002 (console output left in production): Program.cs, Cli.cs and Reporting.cs ARE the
+# CLI entry point / arg layer and the output/reporting layer — writing to the console is
+# their purpose.
 [src/Program.cs]
+dotnet_diagnostic.SAST002.severity = none
+
+[src/Cli.cs]
 dotnet_diagnostic.SAST002.severity = none
 
 [src/Reporting.cs]
 dotnet_diagnostic.SAST002.severity = none
+
+# SAST005 (fire-and-forget): CheckDiscardedAsync is a synchronous rule-helper whose name
+# ends in "Async" — the fire-and-forget detector mis-flags its own call site, not real code.
+[src/Rules/Sast/SastRules.cs]
+dotnet_diagnostic.SAST005.severity = none
